@@ -6,6 +6,7 @@ import LoadingSkeleton from "./LoadingSkeleton";
 
 export default function BalanceCard({ account }) {
   const [isVisible, setIsVisible] = useState(true);
+  const [isAccountVisible, setIsAccountVisible] = useState(false);
 
   if (!account) {
     return <LoadingSkeleton className="px-4" />;
@@ -13,6 +14,10 @@ export default function BalanceCard({ account }) {
 
   const toggleVisibility = () => {
     setIsVisible(!isVisible);
+  };
+
+  const toggleAccountVisibility = () => {
+    setIsAccountVisible((visible) => !visible);
   };
 
   const maskAccount = (accountNum) => {
@@ -62,7 +67,18 @@ export default function BalanceCard({ account }) {
         <div className="flex items-center justify-between pt-3 border-t border-white/20">
           <div>
             <p className="text-xs opacity-75">Account Number</p>
-            <p className="text-sm font-medium mt-1">{maskAccount(account.accountNumber)}</p>
+            <button
+              type="button"
+              onClick={toggleAccountVisibility}
+              className="mt-1 text-sm font-medium rounded underline-offset-2 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-white/60"
+              aria-label={
+                isAccountVisible ? "Hide account number" : "Show account number"
+              }
+            >
+              {isAccountVisible
+                ? String(account.accountNumber || "")
+                : maskAccount(account.accountNumber)}
+            </button>
           </div>
           <div className="text-right">
             <p className="text-xs opacity-75">Account Type</p>
