@@ -341,6 +341,32 @@ async function sendBrandedEmail({ to, subject, heading, greetingName, paragraphs
   return deliver({ to, subject, text, html, from: buildFrom() });
 }
 
+async function deliverViaBrevoApi(message) {
+  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'api-key': process.env.BREVO_API_KEY,
+      'content-type': 'application/json',
+      accept: 'application/json',
+    },
+    body: JSON.stringify({
+      sender: { name: message.from.name, email: message.from.address },
+      to: [].concat(message.to).map((email) => ({ email })),
+      subject: message.subject,
+      htmlContent: message.html,
+      textContent: message.text,
+    }),
+  });
+
+  const body = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    throw new Error(`Brevo API error ${res.status}: ${body.message || 'unknown error'}`);
+  }
+
+  return { accepted: true, messageId: body.messageId };
+}
+
 async function deliver(message) {
   if (IN_TEST_MODE) {
     if (mockFailNext) {
@@ -357,6 +383,10 @@ async function deliver(message) {
     };
     capturedMessages.push(record);
     return { accepted: true, messageId: `test-${capturedMessages.length}`, record };
+  }
+
+    if (process.env.BREVO_API_KEY) {
+    return deliverViaBrevoApi(message);
   }
 
   if (!transporter) {
