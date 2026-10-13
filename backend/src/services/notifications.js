@@ -71,12 +71,60 @@ async function retryAccountCreatedEmail(userId) {
 
 function safeMessage(error) {
   const raw = (error && error.message) || String(error);
-  return raw.replace(/\s+/g, " ").slice(0, 300);
+  return raw.replace(/\s+/g, ' ').slice(0, 300);
+}
+
+// Sends a generic branded transactional email (credit/debit alerts, PIN
+// changes, security notices) and records the delivery in the email outbox.
+// This is best-effort and never throws: a failed email must not roll back or
+// mask the financial operation that already committed.
+async function deliverBrandedEmail({
+  userId,
+  toEmail,
+  type,
+  subject,
+  heading,
+  greetingName,
+  paragraphs = [],
+  details = [],
+}) {
+  const notification = await db.EmailNotification.create({
+    userId,
+    type,
+    toEmail,
+    subject,
+    status: 'pending',
+  });
+
+  try {
+    await emailService.sendBrandedEmail({
+      to: toEmail,
+      subject,
+      heading,
+      greetingName,
+      paragraphs,
+      details,
+    });
+    notification.status = 'sent';
+    notification.lastError = null;
+  } catch (error) {
+    notification.status = 'failed';
+    notification.lastError = safeMessage(error);
+    console.error(
+      `[email] ${type} delivery failed for ${toEmail}: ${notification.lastError}`
+    );
+  }
+
+  notification.attempts += 1;
+  notification.lastAttemptAt = new Date();
+  await notification.save();
+  return notification;
 }
 
 module.exports = {
   deliverAccountCreatedEmail,
   retryAccountCreatedEmail,
+  deliverBrandedEmail,
   ACCOUNT_CREATED_TYPE,
   ACCOUNT_CREATED_SUBJECT,
 };

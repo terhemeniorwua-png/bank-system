@@ -217,6 +217,92 @@ function renderAccountCreatedEmail({ name, accountNumber, accountType, email }) 
   };
 }
 
+// Generic branded transactional email used for alerts (credits, debits, PIN
+// changes, security notices). The subject is supplied by the caller; the body
+// is built from a heading, an optional greeting, paragraph lines and an
+// optional list of label/value details.
+function renderBrandedEmail({ heading, greetingName, paragraphs = [], details = [] }) {
+  const firstName = greetingName ? String(greetingName).trim().split(/\s+/)[0] : '';
+
+  const paragraphsHtml = paragraphs
+    .map(
+      (line) =>
+        `<p style="margin:0 0 16px;font-size:15px;color:#102A56;line-height:1.6;">${escapeHtml(line)}</p>`
+    )
+    .join('\n');
+
+  const detailsHtml = details.length
+    ? `
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F9FF;border-radius:12px;margin-bottom:20px;">
+                  <tr>
+                    <td style="padding:16px 20px;font-family:Arial,Helvetica,sans-serif;">
+                      ${details
+                        .map(
+                          (detail) => `
+                      <p style="margin:0 0 4px;font-size:12px;color:#7184A6;">${escapeHtml(
+                        String(detail.label).toUpperCase()
+                      )}</p>
+                      <p style="margin:0 0 12px;font-size:15px;color:#102A56;">${escapeHtml(
+                        String(detail.value)
+                      )}</p>`
+                        )
+                        .join('')}
+                    </td>
+                  </tr>
+                </table>`
+    : '';
+
+  const html = `
+  <!DOCTYPE html>
+  <html lang="en">
+  <body style="margin:0;padding:0;background:#F5F9FF;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F9FF;padding:24px 0;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="520" cellpadding="0" cellspacing="0" style="width:100%;max-width:520px;background:#FFFFFF;border-radius:16px;box-shadow:0 4px 20px rgba(16,42,86,0.08);">
+        ${brandHeader()}
+            <tr>
+              <td style="padding:16px 32px;font-family:Arial,Helvetica,sans-serif;">
+                <h1 style="margin:0 0 12px;font-size:22px;color:#102A56;">${escapeHtml(heading)}</h1>
+                <p style="margin:0 0 6px;font-size:15px;color:#102A56;line-height:1.6;">
+                  Hello${firstName ? ` ${escapeHtml(firstName)}` : ''},
+                </p>
+                ${paragraphsHtml}
+                ${detailsHtml}
+                <p style="margin:0;padding:14px 16px;background:#F5F9FF;border-left:4px solid #168BFA;font-size:14px;color:#102A56;line-height:1.6;">
+                  If you did not perform this action, please contact BBT Cash support immediately.
+                </p>
+              </td>
+            </tr>
+        ${footer()}
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+  </html>
+  `;
+
+  const text = [
+    'BBT Cash',
+    '',
+    heading,
+    '',
+    `Hello${firstName ? ` ${firstName}` : ''},`,
+    '',
+    ...paragraphs,
+    ...(details.length
+      ? ['', ...details.map((detail) => `${detail.label}: ${detail.value}`)]
+      : []),
+    '',
+    'If you did not perform this action, please contact BBT Cash support immediately.',
+    '',
+    'This is a service message from BBT Cash.',
+  ].join('\n');
+
+  return { text, html };
+}
+
 function buildFrom() {
   const senderEmail = smtpConfig.senderEmail;
   if (!senderEmail) {
@@ -241,6 +327,16 @@ async function sendAccountCreatedEmail({ to, name, accountNumber, accountType, e
     accountNumber,
     accountType,
     email,
+  });
+  return deliver({ to, subject, text, html, from: buildFrom() });
+}
+
+async function sendBrandedEmail({ to, subject, heading, greetingName, paragraphs, details }) {
+  const { text, html } = renderBrandedEmail({
+    heading,
+    greetingName,
+    paragraphs,
+    details,
   });
   return deliver({ to, subject, text, html, from: buildFrom() });
 }
@@ -293,8 +389,10 @@ function setMockFailure(shouldFail) {
 module.exports = {
   sendVerificationEmail,
   sendAccountCreatedEmail,
+  sendBrandedEmail,
   renderVerificationEmail,
   renderAccountCreatedEmail,
+  renderBrandedEmail,
   getCapturedMessages,
   setMockFailure,
   smtpConfigured,
