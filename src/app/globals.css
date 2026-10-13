@@ -52,3 +52,37 @@ html {
     scroll-behavior: auto !important;
   }
 }
+
+@keyframes bbt-splash-logo-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes bbt-splash-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.bbt-splash-logo {
+  animation: bbt-splash-logo-in 700ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.bbt-splash-wordmark {
+  animation: bbt-fade-in 900ms ease-out 150ms both;
+}
+
+.bbt-splash-tagline {
+  animation: bbt-splash-fade-in 900ms ease-out 250ms both;
+}
