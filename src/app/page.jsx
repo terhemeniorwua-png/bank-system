@@ -1,7 +1,4 @@
-export default function Page() {
-  return (
-    <div>
-      Home page of the maoney
-    </div>
-  );
-}
+"use client";
+
+import Dashboard from "./dashboard/page";
+export default Dashboard;
