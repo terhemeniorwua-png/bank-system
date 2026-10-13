@@ -53,6 +53,23 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: true,
         unique: true,
       },
+      // Optional processing fee in integer NGN (0 for fee-free services).
+      fee: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+        defaultValue: 0,
+        validate: { min: 0 },
+      },
+      // Reference returned by the external/simulated payment provider.
+      providerReference: {
+        type: DataTypes.STRING,
+        allowNull: true,
+      },
+      // Safe, non-sensitive service details (network, plan, recipient, etc.).
+      metadata: {
+        type: DataTypes.JSONB,
+        allowNull: true,
+      },
       senderId: {
         type: DataTypes.UUID,
         allowNull: true,

@@ -379,6 +379,15 @@ const changePin = async (req, res) => {
   if (!ok) {
     const failures = pinAttempts.recordFailure(user.id);
 
+    try {
+      await notificationCenter.notifySecurityAlert(
+        user,
+        "Someone tried to change your transaction PIN but entered the wrong current PIN. If this was not you, secure your account immediately."
+      );
+    } catch {
+      // Ignore notification errors.
+    }
+
     if (failures >= pinAttempts.MAX_FAILURES) {
       try {
         await notificationCenter.notifySecurityAlert(

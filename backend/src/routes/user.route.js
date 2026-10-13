@@ -20,6 +20,12 @@ const {
 const loginValidation = require('../validators/login');
 const { changePinValidation } = require('../validators/pin');
 const {
+  billValidateValidation,
+  billPayValidation,
+  dataPurchaseValidation,
+  airtimePurchaseValidation,
+} = require('../validators/payment');
+const {
   deposit,
   balance,
   accountBalance,
@@ -28,6 +34,19 @@ const {
   changePin,
   transactionHistory,
 } = require('../controllers/userActions');
+const {
+  getBillCategories,
+  getBillProviders,
+  validateBillCustomer,
+  payBill,
+  getBillHistory,
+  getNetworks,
+  getDataPlans,
+  purchaseData,
+  getDataHistory,
+  purchaseAirtime,
+  getAirtimeHistory,
+} = require('../controllers/paymentController');
 const {
   listNotifications,
   unreadCount,
@@ -101,6 +120,23 @@ router.get('/balance', authenticate, userAuthorization, balance);
 router.get('/account/balance', authenticate, accountBalance);
 router.post('/transfer', authenticate, userAuthorization, transfer);
 router.post('/createPin', authenticate, createPin);
+
+// Payments: airtime, data and bills. Browsing the catalog only needs a valid
+// session; every purchase additionally requires (and verifies) the PIN.
+router.get('/bills/categories', authenticate, getBillCategories);
+router.get('/bills/providers', authenticate, getBillProviders);
+router.post('/bills/validate', authenticate, validate(billValidateValidation), validateBillCustomer);
+router.post('/bills/pay', authenticate, userAuthorization, validate(billPayValidation), payBill);
+router.get('/bills/history', authenticate, getBillHistory);
+
+router.get('/data/networks', authenticate, getNetworks);
+router.get('/data/plans', authenticate, getDataPlans);
+router.post('/data/purchase', authenticate, userAuthorization, validate(dataPurchaseValidation), purchaseData);
+router.get('/data/history', authenticate, getDataHistory);
+
+router.get('/airtime/networks', authenticate, getNetworks);
+router.post('/airtime/purchase', authenticate, userAuthorization, validate(airtimePurchaseValidation), purchaseAirtime);
+router.get('/airtime/history', authenticate, getAirtimeHistory);
 router.patch('/change-pin', pinLimiter, authenticate, validate(changePinValidation), changePin);
 router.post('/change-pin', pinLimiter, authenticate, validate(changePinValidation), changePin);
 router.post('/pinChange', pinLimiter, authenticate, validate(changePinValidation), changePin);

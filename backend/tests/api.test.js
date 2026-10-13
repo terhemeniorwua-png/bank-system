@@ -488,6 +488,39 @@ test('login rejects a wrong password', async () => {
   assert.equal(json.message, 'Invalid email or password');
 });
 
+test('a failed login alerts the account owner', async () => {
+  const user = await createFullUser();
+  await request('/login', {
+    method: 'POST',
+    body: { email: user.email, password: 'Wrong@999' },
+  });
+
+  const account = await db.User.findOne({ where: { email: user.email } });
+  const notes = await db.Notification.findAll({ where: { userId: account.id } });
+  const alert = notes.find(
+    (n) => n.type === 'security_alert' && n.metadata && n.metadata.event === 'login_attempt'
+  );
+  assert.ok(alert, 'the owner receives a failed-login alert');
+});
+
+test('a failed PIN change attempt alerts the account owner', async () => {
+  const user = await createFullUser();
+  const res = await request('/change-pin', {
+    method: 'POST',
+    token: user.token,
+    body: { currentPin: '0000', newPin: '5678', confirmPin: '5678' },
+  });
+  assert.equal(res.status, 400);
+  assert.equal(res.json.message, 'Your current PIN is incorrect');
+
+  const account = await db.User.findOne({ where: { email: user.email } });
+  const notes = await db.Notification.findAll({ where: { userId: account.id } });
+  assert.ok(
+    notes.some((n) => n.type === 'security_alert'),
+    'the owner receives an alert about the failed PIN change'
+  );
+});
+
 test('login rejects an unknown email', async () => {
   const { status, json } = await request('/login', {
     method: 'POST',
@@ -1268,4 +1301,467 @@ test('change PIN requires authentication', async () => {
     body: { currentPin: '1234', newPin: '5678', confirmPin: '5678' },
   });
   assert.equal(res.status, 403);
+});
+// ---------------------------------------------------------------------------
+// Payments: airtime, data and bills
+// ---------------------------------------------------------------------------
+
+// Creates a verified, logged-in user that has NOT created a transaction PIN.
+async function createUserWithoutPin(overrides = {}) {
+  const payload = signupPayload(overrides);
+  const password = payload.password;
+
+  await request('/signup', { method: 'POST', body: payload });
+  const code = lastCodeFor(payload.email);
+  assert.ok(code, 'verification code should be sent');
+
+  await request('/verify-email', {
+    method: 'POST',
+    body: { email: payload.email, code },
+  });
+
+  const loginRes = await request('/login', {
+    method: 'POST',
+    body: { email: payload.email, password },
+  });
+
+  return {
+    name: payload.name,
+    email: payload.email,
+    password,
+    token: loginRes.json.details.token,
+    accountNumber: loginRes.json.details.accountNum,
+  };
+}
+
+async function fund(user, amount) {
+  const res = await request('/deposit', {
+    method: 'PUT',
+    token: user.token,
+    body: { accountNumber: user.accountNumber, amount: String(amount) },
+  });
+  assert.equal(res.status, 200);
+}
+
+async function currentBalance(user) {
+  const res = await request('/account/balance', { method: 'GET', token: user.token });
+  assert.equal(res.status, 200);
+  return res.json.balance;
+}
+
+test('a user can list supported networks for airtime and data', async () => {
+  const user = await createFullUser();
+
+  const airtime = await request('/airtime/networks', { method: 'GET', token: user.token });
+  assert.equal(airtime.status, 200);
+  assert.equal(airtime.json.paymentMode, 'simulation');
+  const ids = airtime.json.networks.map((n) => n.id);
+  assert.ok(ids.includes('mtn') && ids.includes('airtel'));
+
+  const data = await request('/data/networks', { method: 'GET', token: user.token });
+  assert.equal(data.status, 200);
+  assert.ok(data.json.networks.length >= 4);
+  assert.ok(!('price' in data.json.networks[0]), 'networks must not leak prices');
+});
+
+test('data plans are scoped to the selected network', async () => {
+  const user = await createFullUser();
+
+  const mtn = await request('/data/plans?network=mtn', { method: 'GET', token: user.token });
+  assert.equal(mtn.status, 200);
+  assert.ok(mtn.json.plans.length > 0);
+  assert.ok(mtn.json.plans.every((p) => p.network === 'mtn'));
+
+  const glo = await request('/data/plans?network=glo', { method: 'GET', token: user.token });
+  assert.ok(glo.json.plans.every((p) => p.network === 'glo'));
+  assert.notDeepEqual(
+    mtn.json.plans.map((p) => p.id),
+    glo.json.plans.map((p) => p.id)
+  );
+
+  const unknown = await request('/data/plans?network=unknown', {
+    method: 'GET',
+    token: user.token,
+  });
+  assert.equal(unknown.status, 404);
+});
+
+test('airtime purchase validates network, phone, amount and PIN', async () => {
+  const user = await createFullUser();
+  await fund(user, 1000);
+
+  const cases = [
+    { network: 'unknown', phone: '08030000001', amount: '100' },
+    { network: 'mtn', phone: 'bad-number', amount: '100' },
+    { network: 'mtn', phone: '08030000001', amount: '0' },
+    { network: 'mtn', phone: '08030000001', amount: '-50' },
+    { network: 'mtn', phone: '08030000001', amount: '25' },
+  ];
+
+  for (const c of cases) {
+    const { status } = await request('/airtime/purchase', {
+      method: 'POST',
+      token: user.token,
+      body: { ...c, pin: user.pin },
+    });
+    assert.ok(status >= 400, `expected rejection for ${JSON.stringify(c)}`);
+  }
+
+  assert.equal(await currentBalance(user), 1000, 'no funds debited for invalid requests');
+});
+
+test('a user without a transaction PIN cannot make a PIN-protected payment', async () => {
+  const user = await createUserWithoutPin();
+  await fund(user, 1000);
+
+  const noPin = await request('/airtime/purchase', {
+    method: 'POST',
+    token: user.token,
+    body: { network: 'mtn', phone: '08030000001', amount: '100' },
+  });
+  assert.ok(noPin.status >= 400);
+
+  const fakePin = await request('/airtime/purchase', {
+    method: 'POST',
+    token: user.token,
+    body: { network: 'mtn', phone: '08030000001', amount: '100', pin: '1234' },
+  });
+  assert.ok(fakePin.status >= 400);
+
+  assert.equal(await currentBalance(user), 1000, 'balance must be untouched');
+});
+
+test('a payer cannot debit another account by changing request ids', async () => {
+  const payer = await createFullUser();
+  const victim = await createFullUser();
+  await fund(payer, 1000);
+  await fund(victim, 1000);
+
+  const res = await request('/airtime/purchase', {
+    method: 'POST',
+    token: payer.token,
+    body: {
+      network: 'mtn',
+      phone: '08030000001',
+      amount: '200',
+      pin: payer.pin,
+      from: victim.accountNumber,
+      accountNumber: victim.accountNumber,
+    },
+  });
+  assert.equal(res.status, 200);
+
+  assert.equal(await currentBalance(payer), 800, 'payer is debited');
+  assert.equal(await currentBalance(victim), 1000, 'victim is never touched');
+});
+
+test('airtime purchase debits once and creates exactly one debit notification', async () => {
+  const user = await createFullUser();
+  await fund(user, 1000);
+
+  const res = await request('/airtime/purchase', {
+    method: 'POST',
+    token: user.token,
+    body: { network: 'mtn', phone: '08030000001', amount: '300', pin: user.pin },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.json.status, 'success');
+  assert.equal(res.json.simulated, true);
+  assert.ok(res.json.transaction.reference);
+  assert.equal(res.json.transaction.amount, 300);
+
+  assert.equal(await currentBalance(user), 700);
+
+  const list = (
+    await request('/notifications', { method: 'GET', token: user.token })
+  ).json.notifications;
+  const debits = list.filter((n) => n.type === 'debit' && n.reference === res.json.transaction.reference);
+  assert.equal(debits.length, 1);
+  assert.match(debits[0].title, /Airtime/);
+});
+
+test('a replay with the same reference does not charge twice', async () => {
+  const user = await createFullUser();
+  await fund(user, 1000);
+  const reference = `air-idem-${Date.now()}`;
+  const body = {
+    network: 'mtn',
+    phone: '08030000001',
+    amount: '250',
+    pin: user.pin,
+    reference,
+  };
+
+  const first = await request('/airtime/purchase', { method: 'POST', token: user.token, body });
+  assert.equal(first.status, 200);
+
+  const replay = await request('/airtime/purchase', { method: 'POST', token: user.token, body });
+  assert.equal(replay.status, 200);
+  assert.equal(replay.json.idempotent, true);
+  assert.equal(replay.json.transaction.id, first.json.transaction.id);
+
+  assert.equal(await currentBalance(user), 750, 'only one debit');
+
+  const list = (
+    await request('/notifications', { method: 'GET', token: user.token })
+  ).json.notifications;
+  assert.equal(
+    list.filter((n) => n.type === 'debit' && n.reference === reference).length,
+    1
+  );
+});
+
+test('insufficient balance is rejected without partial effects', async () => {
+  const user = await createFullUser();
+  await fund(user, 100);
+
+  const res = await request('/airtime/purchase', {
+    method: 'POST',
+    token: user.token,
+    body: { network: 'mtn', phone: '08030000001', amount: '5000', pin: user.pin },
+  });
+  assert.equal(res.status, 400);
+  assert.equal(await currentBalance(user), 100);
+});
+
+test('data purchase resolves the plan price on the server and ignores client price', async () => {
+  const user = await createFullUser();
+  await fund(user, 5000);
+
+  const res = await request('/data/purchase', {
+    method: 'POST',
+    token: user.token,
+    body: {
+      network: 'mtn',
+      planId: 'mtn-1gb-1d',
+      phone: '08030000001',
+      amount: '1',
+      price: '1',
+      pin: user.pin,
+    },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.json.transaction.amount, 350, 'uses catalog price, not client price');
+  assert.equal(await currentBalance(user), 4650);
+});
+
+test('data purchase rejects an unknown plan', async () => {
+  const user = await createFullUser();
+  await fund(user, 5000);
+
+  const res = await request('/data/purchase', {
+    method: 'POST',
+    token: user.token,
+    body: { network: 'mtn', planId: 'nope', phone: '08030000001', pin: user.pin },
+  });
+  assert.equal(res.status, 400);
+  assert.equal(await currentBalance(user), 5000);
+});
+
+test('bill payment validates customer details and pays a fixed plan', async () => {
+  const user = await createFullUser();
+  await fund(user, 30000);
+
+  const categories = await request('/bills/categories', { method: 'GET', token: user.token });
+  assert.equal(categories.status, 200);
+  assert.ok(categories.json.categories.some((c) => c.id === 'electricity'));
+
+  const providers = await request('/bills/providers?category=cable-tv', {
+    method: 'GET',
+    token: user.token,
+  });
+  assert.equal(providers.status, 200);
+  const dstv = providers.json.providers.find((p) => p.id === 'dstv');
+  assert.ok(dstv && dstv.plans.length > 0);
+
+  const badValidate = await request('/bills/validate', {
+    method: 'POST',
+    token: user.token,
+    body: { category: 'cable-tv', provider: 'dstv', customerRef: '00001234' },
+  });
+  assert.equal(badValidate.status, 404);
+
+  const goodValidate = await request('/bills/validate', {
+    method: 'POST',
+    token: user.token,
+    body: { category: 'cable-tv', provider: 'dstv', customerRef: '12345678' },
+  });
+  assert.equal(goodValidate.status, 200);
+  assert.ok(goodValidate.json.customer.name);
+
+  const pay = await request('/bills/pay', {
+    method: 'POST',
+    token: user.token,
+    body: {
+      category: 'cable-tv',
+      provider: 'dstv',
+      customerRef: '12345678',
+      planId: 'dstv-padi',
+      amount: '1',
+      pin: user.pin,
+    },
+  });
+  assert.equal(pay.status, 200);
+  assert.equal(pay.json.transaction.amount, 4400);
+  assert.equal(await currentBalance(user), 25600);
+
+  const list = (
+    await request('/notifications', { method: 'GET', token: user.token })
+  ).json.notifications;
+  assert.ok(
+    list.some((n) => n.type === 'debit' && /Bill Payment/.test(n.title))
+  );
+});
+
+test('electricity bill rejects an out-of-range amount', async () => {
+  const user = await createFullUser();
+  await fund(user, 100000);
+
+  const res = await request('/bills/pay', {
+    method: 'POST',
+    token: user.token,
+    body: {
+      category: 'electricity',
+      provider: 'ikedc',
+      customerRef: '1234567890',
+      amount: '100',
+      pin: user.pin,
+    },
+  });
+  assert.equal(res.status, 400);
+  assert.equal(await currentBalance(user), 100000);
+});
+
+test('a declined payment is refunded and never produces a debit notification', async () => {
+  const user = await createFullUser();
+  await fund(user, 1000);
+
+  // The simulated provider declines recipients ending in 0000.
+  const body = { network: 'mtn', phone: '08030000000', amount: '400', pin: user.pin };
+  const res = await request('/airtime/purchase', {
+    method: 'POST',
+    token: user.token,
+    body,
+  });
+  assert.equal(res.status, 402);
+  assert.equal(res.json.status, 'failed');
+
+  assert.equal(await currentBalance(user), 1000, 'reserved funds are returned');
+
+  const list = (
+    await request('/notifications', { method: 'GET', token: user.token })
+  ).json.notifications;
+  assert.ok(!list.some((n) => n.type === 'debit'), 'no false debit notification');
+  assert.ok(list.some((n) => n.type === 'reversal'), 'a reversal notification is written');
+  assert.ok(list.some((n) => n.type === 'failed'), 'a failure notification is written');
+
+  const reversal = list.find((n) => n.type === 'reversal');
+  assert.equal(reversal.amount, 400);
+
+  // Replaying the same failed reference must not be reported as success.
+  const replayBody = { ...body, reference: res.json.transaction.reference };
+  const replay = await request('/airtime/purchase', {
+    method: 'POST',
+    token: user.token,
+    body: replayBody,
+  });
+  assert.equal(replay.status, 402);
+  assert.equal(replay.json.status, 'failed');
+  assert.equal(replay.json.idempotent, true);
+  assert.equal(await currentBalance(user), 1000, 'no second refund or debit');
+});
+
+test('transaction history lists payment amounts and statuses', async () => {
+  const user = await createFullUser();
+  await fund(user, 1000);
+
+  const purchase = await request('/airtime/purchase', {
+    method: 'POST',
+    token: user.token,
+    body: { network: 'mtn', phone: '08030000001', amount: '200', pin: user.pin },
+  });
+  assert.equal(purchase.status, 200);
+
+  const history = await request('/airtime/history', { method: 'GET', token: user.token });
+  assert.equal(history.status, 200);
+  const found = history.json.transactions.find(
+    (t) => t.reference === purchase.json.transaction.reference
+  );
+  assert.ok(found, 'payment appears in airtime history');
+  assert.equal(found.amount, 200);
+  assert.equal(found.status, 'success');
+  assert.equal(found.type, 'airtime');
+
+  const allTx = await request('/transactions', { method: 'GET', token: user.token });
+  assert.ok(
+    allTx.json.transactions.some((t) => t.reference === purchase.json.transaction.reference),
+    'payment also appears in the general history'
+  );
+});
+
+test('email delivery failure does not repeat or reverse a payment', async () => {
+  const user = await createFullUser();
+  await fund(user, 1000);
+  emailService.setMockFailure(true);
+  try {
+    const res = await request('/airtime/purchase', {
+      method: 'POST',
+      token: user.token,
+      body: { network: 'mtn', phone: '08030000001', amount: '150', pin: user.pin },
+    });
+    assert.equal(res.status, 200);
+    assert.equal(await currentBalance(user), 850, 'debited exactly once');
+
+    const txs = (
+      await request('/airtime/history', { method: 'GET', token: user.token })
+    ).json.transactions;
+    assert.equal(
+      txs.filter((t) => t.reference === res.json.transaction.reference).length,
+      1
+    );
+  } finally {
+    emailService.setMockFailure(false);
+  }
+});
+
+test('concurrent payments cannot overspend a balance', async () => {
+  const user = await createFullUser();
+  await fund(user, 1000);
+
+  const make = () =>
+    request('/airtime/purchase', {
+      method: 'POST',
+      token: user.token,
+      body: {
+        network: 'mtn',
+        phone: '08030000001',
+        amount: '600',
+        pin: user.pin,
+        reference: `concurrent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      },
+    });
+
+  const results = await Promise.all([make(), make(), make()]);
+  const successes = results.filter((r) => r.status === 200 && r.json.status === 'success');
+  assert.equal(successes.length, 1, 'only one 600 payment can succeed from 1000');
+  assert.equal(await currentBalance(user), 400);
+});
+
+test('payments require authentication and a matching PIN', async () => {
+  const user = await createFullUser();
+  await fund(user, 1000);
+
+  const noAuth = await request('/airtime/purchase', {
+    method: 'POST',
+    body: { network: 'mtn', phone: '08030000001', amount: '100', pin: user.pin },
+  });
+  assert.equal(noAuth.status, 403);
+
+  const wrongPin = await request('/airtime/purchase', {
+    method: 'POST',
+    token: user.token,
+    body: { network: 'mtn', phone: '08030000001', amount: '100', pin: '0000' },
+  });
+  assert.equal(wrongPin.status, 400);
+  assert.equal(await currentBalance(user), 1000);
 });

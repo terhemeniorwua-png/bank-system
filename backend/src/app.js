@@ -53,6 +53,17 @@ app.use((err, req, res, next) => {
     });
   }
 
+  // Errors explicitly marked as safe by application code carry their own
+  // status and message; everything else stays a generic 500 so internal
+  // details are never leaked.
+  if (err && err.expose === true && err.status) {
+    return res.status(err.status).json({
+      status: "error",
+      ...(err.code ? { code: err.code } : {}),
+      message: err.message,
+    });
+  }
+
   return res.status(500).json({
     status: "error",
     message: "Something went wrong"

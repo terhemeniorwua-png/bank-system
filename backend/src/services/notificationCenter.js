@@ -193,6 +193,126 @@ async function notifyFailed(
   );
 }
 
+// Debit notification for an airtime purchase. Type "debit" so it appears in
+// the existing Debit filter; the service details live in metadata.
+async function notifyAirtimeDebit(
+  { user, amount, network, phone, reference = null, transactionId },
+  { transaction } = {}
+) {
+  return createNotification(
+    {
+      userId: user.id,
+      type: TYPES.DEBIT,
+      title: "Airtime Purchase Successful",
+      message: `Your account has been debited ${formatNaira(
+        amount
+      )} for a ${network} airtime purchase to ${phone}.`,
+      amount,
+      reference,
+      transactionId,
+      metadata: { serviceType: "airtime", network, phone },
+      dedupeKey: `${transactionId}:${user.id}:airtime`,
+    },
+    { transaction }
+  );
+}
+
+// Debit notification for a data bundle purchase.
+async function notifyDataDebit(
+  { user, amount, network, planName, allowance, phone, reference = null, transactionId },
+  { transaction } = {}
+) {
+  const bundle = allowance ? `${network} ${allowance} (${planName})` : `${network} ${planName}`;
+  return createNotification(
+    {
+      userId: user.id,
+      type: TYPES.DEBIT,
+      title: "Data Purchase Successful",
+      message: `Your account has been debited ${formatNaira(
+        amount
+      )} for a ${bundle} data bundle to ${phone}.`,
+      amount,
+      reference,
+      transactionId,
+      metadata: { serviceType: "data", network, planName, allowance, phone },
+      dedupeKey: `${transactionId}:${user.id}:data`,
+    },
+    { transaction }
+  );
+}
+
+// Debit notification for a bill payment.
+async function notifyBillDebit(
+  { user, amount, category, provider, customerRef, reference = null, transactionId },
+  { transaction } = {}
+) {
+  const categoryLabel = category ? String(category).replace(/-/g, " ") : "bill";
+  return createNotification(
+    {
+      userId: user.id,
+      type: TYPES.DEBIT,
+      title: "Bill Payment Successful",
+      message: `Your account has been debited ${formatNaira(
+        amount
+      )} for your ${categoryLabel} bill payment${
+        provider ? ` to ${provider}` : ""
+      }.`,
+      amount,
+      reference,
+      transactionId,
+      metadata: { serviceType: "bill", category, provider, customerRef },
+      dedupeKey: `${transactionId}:${user.id}:bill`,
+    },
+    { transaction }
+  );
+}
+
+// Reversal/refund notification. Created when money that was reserved for a
+// payment is returned to the user.
+async function notifyPaymentReversal(
+  { user, amount, reference = null, transactionId = null, reason = "the payment could not be completed" },
+  { transaction } = {}
+) {
+  return createNotification(
+    {
+      userId: user.id,
+      type: TYPES.REVERSAL,
+      title: "Payment Reversed",
+      message: `Your account has been refunded ${formatNaira(
+        amount
+      )} because ${reason}.`,
+      amount,
+      reference,
+      transactionId,
+      metadata: { event: "reversal", reason },
+      dedupeKey: transactionId ? `${transactionId}:${user.id}:reversal` : null,
+    },
+    { transaction }
+  );
+}
+
+// Failure notification for a payment that never resulted in a successful
+// debit. Deliberately distinct from notifyFailed (transfer copy).
+async function notifyPaymentFailed(
+  { user, amount = null, service = "payment", reference = null, reason = "the payment could not be completed" },
+  { transaction } = {}
+) {
+  const amountText = amount ? `${formatNaira(amount)} ` : "";
+  return createNotification(
+    {
+      userId: user.id,
+      type: TYPES.FAILED,
+      title: "Payment Failed",
+      message: `Your ${service} ${amountText}failed because ${reason}.`,
+      amount,
+      reference,
+      metadata: { reason, service },
+      dedupeKey: reference ? `${user.id}:payment_failed:${reference}` : null,
+    },
+    { transaction }
+  );
+}
+
 async function notifyPinCreated(user, { transaction } = {}) {
   return createNotification(
     {
@@ -236,6 +356,24 @@ async function notifySecurityAlert(user, detail, { transaction } = {}) {
   );
 }
 
+// Alerts the account owner when someone enters the wrong password for their
+// account. Deduplicated per user per hour so repeated guesses cannot flood the
+// notification feed.
+async function notifyLoginAttempt(user, { transaction } = {}) {
+  return createNotification(
+    {
+      userId: user.id,
+      type: TYPES.SECURITY_ALERT,
+      title: "Failed Login Attempt",
+      message:
+        "Someone entered an incorrect password for your account. If this was not you, change your password immediately.",
+      metadata: { event: "login_attempt" },
+      dedupeKey: `login_attempt:${user.id}:${new Date().toISOString().slice(0, 13)}`,
+    },
+    { transaction }
+  );
+}
+
 module.exports = {
   TYPES,
   formatNaira,
@@ -245,7 +383,13 @@ module.exports = {
   notifyDeposit,
   notifyWithdrawal,
   notifyFailed,
+  notifyAirtimeDebit,
+  notifyDataDebit,
+  notifyBillDebit,
+  notifyPaymentReversal,
+  notifyPaymentFailed,
   notifyPinCreated,
   notifyPinChanged,
   notifySecurityAlert,
+  notifyLoginAttempt,
 };

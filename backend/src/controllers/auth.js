@@ -4,6 +4,7 @@ const bcrypt = require("bcrypt");
 const db = require("../../models");
 const emailService = require("../services/email");
 const notifications = require("../services/notifications");
+const notificationCenter = require("../services/notificationCenter");
 
 require("dotenv").config({ quiet: true });
 
@@ -415,6 +416,10 @@ const login = async (req, res) => {
   const isPasswordCorrect = await bcrypt.compare(password, getUser.password);
 
   if (!isPasswordCorrect) {
+    // Alert the real account owner that someone failed to authenticate as them.
+    // Never let a notification problem affect the login response.
+    await notificationCenter.notifyLoginAttempt(getUser).catch(() => {});
+
     return res.status(401).json({
       status: "error",
       message: "Invalid email or password",

@@ -67,6 +67,31 @@ export const api = {
   createPin: (body) => request("/user/createPin", { method: "POST", body }),
   changePin: (body) => request("/user/change-pin", { method: "PATCH", body }),
 
+  // Payments — catalogs and histories.
+  getNetworks: () => request("/user/data/networks", { method: "GET" }),
+  getDataPlans: (network) =>
+    request(`/user/data/plans?network=${encodeURIComponent(network)}`, {
+      method: "GET",
+    }),
+  getBillCategories: () =>
+    request("/user/bills/categories", { method: "GET" }),
+  getBillProviders: (category) =>
+    request(`/user/bills/providers?category=${encodeURIComponent(category)}`, {
+      method: "GET",
+    }),
+  validateBillCustomer: (body) =>
+    request("/user/bills/validate", { method: "POST", body }),
+
+  // Payments — purchases and histories.
+  purchaseAirtime: (body) =>
+    request("/user/airtime/purchase", { method: "POST", body }),
+  getAirtimeHistory: () => request("/user/airtime/history", { method: "GET" }),
+  purchaseData: (body) =>
+    request("/user/data/purchase", { method: "POST", body }),
+  getDataHistory: () => request("/user/data/history", { method: "GET" }),
+  payBill: (body) => request("/user/bills/pay", { method: "POST", body }),
+  getBillHistory: () => request("/user/bills/history", { method: "GET" }),
+
   getNotifications: ({ page = 1, limit = 20, filter = "all" } = {}) =>
     request(
       `/user/notifications?page=${page}&limit=${limit}&filter=${encodeURIComponent(
