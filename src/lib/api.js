@@ -1,5 +1,14 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:5100";
 
+// Dispatched on window when the backend rejects an authenticated request with
+// 401 (an expired or invalid token). The AuthProvider listens for this and ends
+// the local session so the user is returned to the login screen.
+export const SESSION_EXPIRED_EVENT = "bbt:session-expired";
+
+// Endpoints that legitimately return 401 (bad credentials) while the visitor is
+// not yet logged in; these must never be treated as an expired session.
+const PUBLIC_AUTH_ENDPOINT = /\/user\/(login|signup|verify-email|resend-verification)(\?|$)/;
+
 function extractCookie(name) {
   if (typeof document === "undefined") return null;
   const value = `; ${document.cookie}`;
@@ -11,12 +20,14 @@ function extractCookie(name) {
 async function request(endpoint, options = {}) {
   const url = endpoint.startsWith("http") ? endpoint : `${API_BASE}${endpoint}`;
   const defaultHeaders = {};
+  let sentAuth = false;
 
   // Attach token from cookie if present
   if (typeof document !== "undefined") {
     const token = extractCookie("bbt_token");
     if (token) {
       defaultHeaders.Authorization = `Bearer ${token}`;
+      sentAuth = true;
     }
   }
 
@@ -43,6 +54,17 @@ async function request(endpoint, options = {}) {
   }
 
   if (!res.ok) {
+    // A rejected authenticated request means the session is no longer valid
+    // (for example the token expired). Let the AuthProvider clear it.
+    if (
+      res.status === 401 &&
+      sentAuth &&
+      !PUBLIC_AUTH_ENDPOINT.test(endpoint) &&
+      typeof window !== "undefined"
+    ) {
+      window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+    }
+
     const error = new Error(data?.message || data?.error || "Request failed");
     error.status = res.status;
     error.data = data;
