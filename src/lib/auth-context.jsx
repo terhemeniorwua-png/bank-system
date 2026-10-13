@@ -18,20 +18,25 @@ export function AuthProvider({ children }) {
     if (token) {
       try {
         const payload = JSON.parse(atob(token.split(".")[1]));
-        const userData = {
-          id: payload.id,
-          name: payload.name,
-          email: payload.email,
-          role: payload.role,
-          accountNumber: payload.accountNum || payload.accountNumber,
-          pin: payload.pin,
-        };
-        setUser(userData);
+        setTimeout(() => {
+          setUser({
+            id: payload.id,
+            name: payload.name,
+            email: payload.email,
+            role: payload.role,
+            accountNumber: payload.accountNum || payload.accountNumber,
+            pin: payload.pin,
+          });
+        }, 0);
       } catch {
         setUser(null);
       }
     }
-    setLoading(false);
+    if (typeof window !== "undefined") {
+      setTimeout(() => setLoading(false), 0);
+    } else {
+      setLoading(false);
+    }
   }, []);
 
   const login = (userData, token) => {

@@ -26,8 +26,11 @@ export default function DepositPage() {
       router.push("/login");
       return;
     }
-    if (user && !form.accountNumber) {
-      setForm((prev) => ({ ...prev, accountNumber: user.accountNumber }));
+    if (user) {
+      setForm((prev) => {
+        if (prev.accountNumber) return prev;
+        return { ...prev, accountNumber: user.accountNumber };
+      });
     }
   }, [user, authLoading, router]);
 

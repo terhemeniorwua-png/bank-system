@@ -6,6 +6,7 @@ const http = require('node:http');
 const app = require('../src/app');
 const db = require('../models');
 const emailService = require('../src/services/email');
+const notifications = require('../src/services/notifications');
 
 let server;
 let base;
@@ -224,6 +225,122 @@ test('correct code creates a verified account and sends a confirmation email', a
   });
   assert.equal(login.status, 200);
   assert.ok(login.json.details.token);
+});
+
+test('a failed account creation does not send a confirmation email', async () => {
+  const payload = signupPayload();
+  await request('/signup', { method: 'POST', body: payload });
+  const code = lastCodeFor(payload.email);
+
+  const originalCreate = db.User.create;
+  db.User.create = async () => {
+    throw new Error('simulated database failure');
+  };
+
+  let verifyRes;
+  try {
+    verifyRes = await request('/verify-email', {
+      method: 'POST',
+      body: { email: payload.email, code },
+    });
+  } finally {
+    db.User.create = originalCreate;
+  }
+
+  assert.equal(verifyRes.status, 500);
+
+  const user = await db.User.findOne({ where: { email: payload.email } });
+  assert.equal(user, null, 'no account should be persisted on failure');
+  assert.equal(
+    lastAccountCreatedEmailFor(payload.email),
+    null,
+    'no confirmation email may be sent when account creation fails'
+  );
+});
+
+test('a temporary confirmation-email failure keeps the account and can be retried without duplicating it', async () => {
+  const payload = signupPayload();
+  await request('/signup', { method: 'POST', body: payload });
+  const code = lastCodeFor(payload.email);
+
+  // Fail only the account-creation confirmation delivery, not the verification.
+  emailService.setMockFailure(true);
+
+  const verifyRes = await request('/verify-email', {
+    method: 'POST',
+    body: { email: payload.email, code },
+  });
+
+  assert.equal(verifyRes.status, 200);
+  assert.equal(verifyRes.json.emailVerified, true);
+  assert.equal(
+    verifyRes.json.confirmationEmail,
+    'failed',
+    'the API must not report success for an undelivered email'
+  );
+
+  const accountNumber = verifyRes.json.user.accountNumber;
+  assert.ok(accountNumber);
+
+  const users = await db.User.findAll({ where: { email: payload.email } });
+  assert.equal(users.length, 1, 'the account must survive an email failure');
+  assert.equal(users[0].accountNumber, accountNumber);
+
+  const notification = await db.EmailNotification.findOne({
+    where: { userId: users[0].id, type: 'account_created' },
+  });
+  assert.ok(notification, 'delivery status must be recorded for retry');
+  assert.equal(notification.status, 'failed');
+
+  assert.equal(
+    lastAccountCreatedEmailFor(payload.email),
+    null,
+    'a failed delivery must not capture an email'
+  );
+
+  // Retrying delivery re-sends the email without creating another account.
+  const retried = await notifications.retryAccountCreatedEmail(users[0].id);
+  assert.equal(retried.status, 'sent');
+
+  const usersAfterRetry = await db.User.findAll({
+    where: { email: payload.email },
+  });
+  assert.equal(
+    usersAfterRetry.length,
+    1,
+    'retrying email delivery must not create another account'
+  );
+
+  const confirmation = lastAccountCreatedEmailFor(payload.email);
+  assert.ok(confirmation, 'retry should deliver the confirmation email');
+  assert.ok(confirmation.html.includes(accountNumber));
+
+  // A second retry must not re-send an already-sent notification.
+  await notifications.retryAccountCreatedEmail(users[0].id);
+  const delivered = emailService
+    .getCapturedMessages()
+    .filter(
+      (m) => m.to === payload.email && m.subject.includes('Created Successfully')
+    );
+  assert.equal(delivered.length, 1, 'a sent notification must not be re-sent');
+});
+
+test('account numbers are unique and not derived from the internal id', async () => {
+  const numbers = new Set();
+
+  for (let i = 0; i < 5; i += 1) {
+    const account = await createFullUser();
+    assert.match(account.accountNumber, /^\d{10}$/);
+    assert.ok(
+      !numbers.has(account.accountNumber),
+      'account numbers must be unique'
+    );
+    numbers.add(account.accountNumber);
+
+    const row = await db.User.findOne({ where: { email: account.email } });
+    assert.equal(row.accountNumber, account.accountNumber);
+    assert.notEqual(String(row.accountNumber), String(row.id));
+  }
 });
 
 test('incorrect code does not create an account', async () => {

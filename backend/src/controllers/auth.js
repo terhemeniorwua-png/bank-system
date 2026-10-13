@@ -3,6 +3,7 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcrypt");
 const db = require("../../models");
 const emailService = require("../services/email");
+const notifications = require("../services/notifications");
 
 require("dotenv").config({ quiet: true });
 
@@ -239,37 +240,15 @@ const verifyEmail = async (req, res) => {
 
   // The account-creation confirmation email is a notification, not the
   // mechanism that creates the account. A delivery failure never rolls back
-  // the committed account. Delivery status is recorded for a safe retry.
+  // the committed account; the outbox records status so it can be retried.
   let confirmationEmailStatus = "failed";
   try {
-    const notification = await db.EmailNotification.create({
-      userId: user.id,
-      type: "account_created",
-      toEmail: normalizedEmail,
-      subject: "Welcome to BBT Cash — Your Account Has Been Created Successfully",
-      status: "pending",
-    });
-
-    try {
-      await emailService.sendAccountCreatedEmail({
-        to: normalizedEmail,
-        name: user.name,
-        accountNumber: user.accountNumber,
-        accountType: user.role,
-        email: normalizedEmail,
-      });
-      notification.status = "sent";
-      confirmationEmailStatus = "sent";
-    } catch (sendError) {
-      notification.status = "failed";
-      notification.lastError = safeDeliveryMessage(sendError);
-      console.error(
-        `[email] account-created delivery failed for ${normalizedEmail}: ${notification.lastError}`
-      );
-    }
-    notification.attempts += 1;
-    notification.lastAttemptAt = new Date();
-    await notification.save();
+    const notification = await notifications.deliverAccountCreatedEmail(
+      user,
+      normalizedEmail
+    );
+    confirmationEmailStatus =
+      notification.status === "sent" ? "sent" : "failed";
   } catch (notificationError) {
     console.error(
       `[email] notification record failed for ${normalizedEmail}: ${safeDeliveryMessage(notificationError)}`
