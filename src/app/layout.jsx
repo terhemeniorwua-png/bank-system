@@ -2,6 +2,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Navbar from "./components/Navbar";
 import { AuthProvider } from "@/lib/auth-context";
+import PinReminder from "./components/PinReminder";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -27,6 +28,7 @@ export default function RootLayout({ children }) {
       <body className="min-h-full flex flex-col text-text-primary">
         <AuthProvider>
           <Navbar />
+          <PinReminder />
           <main className="flex-1 w-full pb-[5rem]">{children}</main>
         </AuthProvider>
       </body>

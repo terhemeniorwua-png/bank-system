@@ -15,6 +15,7 @@ import { useAuth } from "@/lib/auth-context";
 import api from "@/lib/api";
 import { maskAccount } from "@/lib/utils";
 import PinInput from "@/app/components/PinInput";
+import { PIN_CREATED_EVENT } from "@/app/components/PinReminder";
 
 const PIN_FORMAT = /^\d{4}$/;
 
@@ -148,6 +149,10 @@ export default function ProfilePage() {
           message: "Your transaction PIN has been created successfully.",
         });
         setProfile((prev) => (prev ? { ...prev, hasPin: true } : prev));
+        // Let the global PIN reminder know setup is done so it stops nagging.
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new Event(PIN_CREATED_EVENT));
+        }
       } else {
         await api.changePin({ currentPin, newPin, confirmPin });
         setBanner({

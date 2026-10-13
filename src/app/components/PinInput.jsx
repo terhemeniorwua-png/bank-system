@@ -10,9 +10,13 @@ export default function PinInput({
   disabled = false,
   autoFocus = false,
   id,
+  circular = false,
 }) {
   const inputsRef = useRef([]);
   const digits = String(value).split("").slice(0, 4);
+  const boxClass = circular
+    ? "h-14 w-14 rounded-full"
+    : "h-14 w-12 rounded-xl";
 
   const commit = (next) => {
     onChange(next.join("").replace(/\D/g, "").slice(0, 4));
@@ -101,7 +105,7 @@ export default function PinInput({
             aria-invalid={Boolean(error)}
             onChange={(event) => handleChange(index, event)}
             onKeyDown={(event) => handleKeyDown(index, event)}
-            className={`h-14 w-12 rounded-xl border bg-white text-center text-xl font-semibold text-text-primary outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-50 ${
+            className={`${boxClass} border bg-white text-center text-xl font-semibold text-text-primary outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-50 ${
               error ? "border-error" : "border-border"
             }`}
           />
