@@ -4,6 +4,7 @@ const notificationCenter = require("../services/notificationCenter");
 const emailOutbox = require("../services/notifications");
 const { hashPin, verifyPin } = require("../services/pin");
 const pinAttempts = require("../services/pinAttempts");
+const banks = require("../services/banks");
 
 require("dotenv").config();
 
@@ -177,21 +178,61 @@ const accountBalance = async (req, res) => {
 
 // Transfer
 const transfer = async (req, res) => {
-  const { to, amount, from, reference } = req.body;
+  const { to, amount, from, reference, narration } = req.body;
   const transferAmount = Number(amount);
 
-  if (!Number.isFinite(transferAmount) || transferAmount <= 0) {
+  if (!Number.isFinite(transferAmount) || !Number.isInteger(transferAmount) || transferAmount <= 0) {
     return res.status(400).json({
       message: "Invalid amount",
     });
   }
 
-  if (from && req.user && req.user.id && req.userRecord) {
-    if (from !== req.userRecord.accountNumber) {
-      return res.status(403).json({
-        message: "You can only transfer from your own account",
-      });
-    }
+  // The selected bank determines how the recipient account is resolved. Only
+  // BBT Cash Bank has accounts in this database; external banks require a
+  // provider integration that is not configured, so they are rejected here as
+  // well as at validation time.
+  const bank = banks.getBank(
+    req.body.bank ?? req.body.bankId ?? banks.DEFAULT_BANK_ID
+  );
+
+  if (!bank) {
+    return res.status(400).json({
+      message: "Please select a valid bank",
+    });
+  }
+
+  if (!banks.isInternalBank(bank)) {
+    return res.status(503).json({
+      status: "error",
+      code: "EXTERNAL_TRANSFER_UNAVAILABLE",
+      message:
+        "Transfers to other banks are not available yet. Please choose BBT Cash Bank or try again later.",
+    });
+  }
+
+  const format = banks.validateAccountFormat(bank, to);
+
+  if (!format.valid) {
+    return res.status(400).json({
+      message: format.message,
+    });
+  }
+
+  const recipientAccountNumber = format.accountNumber;
+  const senderAccountNumber = banks.normalizeAccountNumber(
+    from ?? (req.userRecord && req.userRecord.accountNumber)
+  );
+
+  if (
+    from &&
+    req.user &&
+    req.user.id &&
+    req.userRecord &&
+    senderAccountNumber !== req.userRecord.accountNumber
+  ) {
+    return res.status(403).json({
+      message: "You can only transfer from your own account",
+    });
   }
 
   try {
@@ -209,14 +250,20 @@ const transfer = async (req, res) => {
 
       // Lock both rows in a deterministic order to avoid deadlocks.
       const accounts = await db.User.findAll({
-        where: { accountNumber: { [Op.in]: [from, to] } },
+        where: {
+          accountNumber: { [Op.in]: [senderAccountNumber, recipientAccountNumber] },
+        },
         order: [["accountNumber", "ASC"]],
         lock: transaction.LOCK.UPDATE,
         transaction,
       });
 
-      const senderAccount = accounts.find((u) => u.accountNumber === from);
-      const receiverAccount = accounts.find((u) => u.accountNumber === to);
+      const senderAccount = accounts.find(
+        (u) => u.accountNumber === senderAccountNumber
+      );
+      const receiverAccount = accounts.find(
+        (u) => u.accountNumber === recipientAccountNumber
+      );
 
       if (!senderAccount) {
         throw httpError(404, "Source account not found");
@@ -246,6 +293,15 @@ const transfer = async (req, res) => {
           receiverId: receiverAccount.id,
           senderAccountNumber: senderAccount.accountNumber,
           receiverAccountNumber: receiverAccount.accountNumber,
+          metadata: {
+            serviceType: "transfer",
+            bankId: bank.id,
+            bankName: bank.name,
+            internal: true,
+            ...(typeof narration === "string" && narration.trim() !== ""
+              ? { narration: String(narration).trim().slice(0, 200) }
+              : {}),
+          },
         },
         { transaction }
       );

@@ -76,7 +76,6 @@ export default function PinReminder() {
       return undefined;
     }
 
-    if (loadedForRef.current === userId) return undefined;
     loadedForRef.current = userId;
 
     let active = true;
@@ -154,6 +153,12 @@ export default function PinReminder() {
       reminderTimerRef.current = null;
     };
   }, [loading, userId, hasPin]);
+
+  // Close any open PIN UI as soon as the backend confirms a PIN exists (for
+  // example it was created on another device while this session was open).
+  useEffect(() => {
+    if (hasPin === true) setView("none");
+  }, [hasPin]);
 
   const handleSuccess = useCallback(async () => {
     // Stop the schedule immediately, then confirm completion with the backend.

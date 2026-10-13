@@ -1765,3 +1765,185 @@ test('payments require authentication and a matching PIN', async () => {
   assert.equal(wrongPin.status, 400);
   assert.equal(await currentBalance(user), 1000);
 });
+
+// ---------------------------------------------------------------------------
+// Bank catalog and recipient-account validation
+// ---------------------------------------------------------------------------
+
+test('GET /banks lists BBT Cash Bank as the default internal bank', async () => {
+  const user = await createFullUser();
+
+  const res = await request('/banks', { method: 'GET', token: user.token });
+  assert.equal(res.status, 200);
+  assert.equal(res.json.status, 'success');
+  assert.equal(res.json.defaultBank, 'bbt-cash');
+
+  const bbt = res.json.banks.find((b) => b.id === 'bbt-cash');
+  assert.ok(bbt, 'BBT Cash Bank must be in the catalog');
+  assert.equal(bbt.name, 'BBT Cash Bank');
+  assert.equal(bbt.internal, true);
+  assert.equal(bbt.accountNumberLength, 10);
+
+  assert.ok(
+    res.json.banks.some((b) => b.internal === false),
+    'external banks are listed and clearly marked'
+  );
+  assert.ok(
+    res.json.banks.every((b) => b.providerConfigured !== undefined),
+    'configured/provider status must be exposed'
+  );
+});
+
+test('banks and account validation require a session', async () => {
+  const banks = await request('/banks', { method: 'GET' });
+  assert.equal(banks.status, 403);
+
+  const validate = await request('/transfer/validate-account', {
+    method: 'POST',
+    body: { bank: 'bbt-cash', accountNumber: '0000000000' },
+  });
+  assert.equal(validate.status, 403);
+});
+
+test('BBT account validation rejects short, long and nonnumeric numbers', async () => {
+  const user = await createFullUser();
+  const cases = ['', '1', '123456789', '12345678901', 'abcdefghij', '000000000a'];
+
+  for (const accountNumber of cases) {
+    const res = await request('/transfer/validate-account', {
+      method: 'POST',
+      token: user.token,
+      body: { bank: 'bbt-cash', accountNumber },
+    });
+    assert.equal(res.status, 400, `expected 400 for ${JSON.stringify(accountNumber)}`);
+    assert.match(res.json.message, /Invalid account number/i);
+    assert.match(res.json.message, /BBT Cash Bank/);
+  }
+});
+
+test('BBT account validation rejects a nonexistent account', async () => {
+  const user = await createFullUser();
+
+  const res = await request('/transfer/validate-account', {
+    method: 'POST',
+    token: user.token,
+    body: { bank: 'bbt-cash', accountNumber: '0000000000' },
+  });
+  assert.equal(res.status, 404);
+  assert.equal(res.json.message, 'Recipient account not found. Please check the account number.');
+  assert.equal(res.json.code, 'recipient_not_found');
+});
+
+test('BBT account validation resolves an existing recipient without leaking secrets', async () => {
+  const sender = await createFullUser();
+  const receiver = await createFullUser();
+
+  const res = await request('/transfer/validate-account', {
+    method: 'POST',
+    token: sender.token,
+    body: { bank: 'bbt-cash', accountNumber: receiver.accountNumber },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.json.status, 'success');
+  assert.equal(res.json.account.name, receiver.name);
+  assert.equal(res.json.account.accountNumber, receiver.accountNumber);
+  assert.equal(res.json.account.internal, true);
+
+  const serialized = JSON.stringify(res.json);
+  assert.ok(!serialized.includes(receiver.password));
+  assert.ok(!serialized.includes(receiver.pin));
+});
+
+test('external bank validation enforces 11 digits and is refused without a provider', async () => {
+  const user = await createFullUser();
+
+  const short = await request('/transfer/validate-account', {
+    method: 'POST',
+    token: user.token,
+    body: { bank: 'gtbank', accountNumber: '0000000000' },
+  });
+  assert.equal(short.status, 400);
+  assert.equal(short.json.message, 'Invalid account number. Please enter an 11-digit account number.');
+
+  const long = await request('/transfer/validate-account', {
+    method: 'POST',
+    token: user.token,
+    body: { bank: 'gtbank', accountNumber: '000000000000' },
+  });
+  assert.equal(long.status, 400);
+
+  const formatted = await request('/transfer/validate-account', {
+    method: 'POST',
+    token: user.token,
+    body: { bank: 'gtbank', accountNumber: '00000000001' },
+  });
+  assert.equal(formatted.status, 503);
+  assert.equal(formatted.json.code, 'EXTERNAL_TRANSFER_UNAVAILABLE');
+});
+
+test('a transfer to an external bank is refused and never debits the sender', async () => {
+  const sender = await createFullUser();
+  await fund(sender, 1000);
+
+  const res = await request('/transfer', {
+    method: 'POST',
+    token: sender.token,
+    body: {
+      from: sender.accountNumber,
+      to: '00000000001',
+      amount: '100',
+      pin: sender.pin,
+      bank: 'gtbank',
+    },
+  });
+  assert.equal(res.status, 503);
+  assert.equal(res.json.code, 'EXTERNAL_TRANSFER_UNAVAILABLE');
+  assert.equal(await currentBalance(sender), 1000, 'no external "success" debit');
+});
+
+test('an unknown bank is rejected', async () => {
+  const user = await createFullUser();
+  await fund(user, 1000);
+
+  const validate = await request('/transfer/validate-account', {
+    method: 'POST',
+    token: user.token,
+    body: { bank: 'nope', accountNumber: '0000000000' },
+  });
+  assert.equal(validate.status, 400);
+
+  const transfer = await request('/transfer', {
+    method: 'POST',
+    token: user.token,
+    body: {
+      from: user.accountNumber,
+      to: '0000000000',
+      amount: '10',
+      pin: user.pin,
+      bank: 'nope',
+    },
+  });
+  assert.equal(transfer.status, 400);
+  assert.equal(await currentBalance(user), 1000);
+});
+
+test('an internal transfer works when the bank is passed explicitly', async () => {
+  const sender = await createFullUser();
+  const receiver = await createFullUser();
+  await fund(sender, 1000);
+
+  const res = await request('/transfer', {
+    method: 'POST',
+    token: sender.token,
+    body: {
+      from: sender.accountNumber,
+      to: receiver.accountNumber,
+      amount: '300',
+      pin: sender.pin,
+      bank: 'bbt-cash',
+    },
+  });
+  assert.equal(res.status, 200);
+  assert.equal(await currentBalance(sender), 700);
+  assert.equal(await currentBalance(receiver), 300);
+});

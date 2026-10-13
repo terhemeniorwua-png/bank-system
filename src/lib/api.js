@@ -62,6 +62,9 @@ export const api = {
   // Session-authenticated balance (no PIN required once logged in).
   getBalance: () => request("/user/account/balance", { method: "GET" }),
   deposit: (body) => request("/user/deposit", { method: "PUT", body }),
+  getBanks: () => request("/user/banks", { method: "GET" }),
+  validateTransferAccount: (body) =>
+    request("/user/transfer/validate-account", { method: "POST", body }),
   transfer: (body) => request("/user/transfer", { method: "POST", body }),
   transactions: () => request("/user/transactions", { method: "GET" }),
   createPin: (body) => request("/user/createPin", { method: "POST", body }),

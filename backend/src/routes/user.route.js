@@ -35,6 +35,10 @@ const {
   transactionHistory,
 } = require('../controllers/userActions');
 const {
+  listBanks,
+  validateTransferAccount,
+} = require('../controllers/transferController');
+const {
   getBillCategories,
   getBillProviders,
   validateBillCustomer,
@@ -118,6 +122,11 @@ router.get('/me', authenticate, me);
 router.put('/deposit', authenticate, deposit);
 router.get('/balance', authenticate, userAuthorization, balance);
 router.get('/account/balance', authenticate, accountBalance);
+// Bank catalog and recipient-account validation for the transfer flow. Only a
+// valid session is required here; the PIN is verified when the transfer is
+// actually created.
+router.get('/banks', authenticate, listBanks);
+router.post('/transfer/validate-account', authenticate, validateTransferAccount);
 router.post('/transfer', authenticate, userAuthorization, transfer);
 router.post('/createPin', authenticate, createPin);
 

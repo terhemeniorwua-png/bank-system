@@ -32,6 +32,15 @@ export default function BalanceCard({ account }) {
     }).format(num);
   };
 
+  // Customer-facing label. The stored role stays "user" for authorization;
+  // only the display text changes. Admin and other roles keep their own label.
+  const accountTypeLabel = (role) => {
+    const value = String(role || "user").toLowerCase();
+    if (value === "user") return "Customer";
+    if (value === "admin") return "Admin";
+    return value.charAt(0).toUpperCase() + value.slice(1);
+  };
+
   return (
     <div className="px-4 mt-4">
       <div className="bg-gradient-to-br from-primary to-primary-deep rounded-2xl p-5 shadow-xl text-white">
@@ -57,7 +66,7 @@ export default function BalanceCard({ account }) {
           </div>
           <div className="text-right">
             <p className="text-xs opacity-75">Account Type</p>
-            <p className="text-sm font-medium mt-1 capitalize">{account.role || "User"}</p>
+            <p className="text-sm font-medium mt-1">{accountTypeLabel(account.role)}</p>
           </div>
         </div>
       </div>

@@ -5,6 +5,11 @@ import { User } from "lucide-react";
 import NotificationBell from "./NotificationBell";
 
 export default function DashboardHeader({ user }) {
+  // The authenticated user's first name, derived from their profile. Falls back
+  // to a generic greeting when the name is unavailable.
+  const firstName = user?.name ? String(user.name).trim().split(/\s+/)[0] : "";
+  const greeting = firstName ? `Welcome Back, ${firstName}!` : "Welcome Back!";
+
   return (
     <header className="px-4 pt-6 pb-2">
       <div className="flex items-center justify-between">
@@ -16,7 +21,7 @@ export default function DashboardHeader({ user }) {
           </div>
           <div>
             <h1 className="text-base font-semibold text-text-primary">BBT Cash</h1>
-            <p className="text-xs text-text-secondary">Welcome back</p>
+            <p className="text-xs text-text-secondary">{greeting}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
