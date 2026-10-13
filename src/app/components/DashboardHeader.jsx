@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Bell, User, ChevronDown } from "lucide-react";
+import { User } from "lucide-react";
+import NotificationBell from "./NotificationBell";
 
 export default function DashboardHeader({ user }) {
   return (
@@ -19,10 +20,7 @@ export default function DashboardHeader({ user }) {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button className="p-2 hover:bg-white rounded-full transition-colors relative" aria-label="Notifications">
-            <Bell className="w-5 h-5 text-text-secondary" />
-            <span className="absolute top-1 right-1 w-2 h-2 bg-error rounded-full"></span>
-          </button>
+          <NotificationBell />
           <Link href="/profile" className="p-2 hover:bg-white rounded-full transition-colors">
             <User className="w-5 h-5 text-text-secondary" />
           </Link>

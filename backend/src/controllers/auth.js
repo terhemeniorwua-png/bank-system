@@ -468,7 +468,7 @@ const me = async (req, res) => {
 
   return res.status(200).json({
     status: "success",
-    user: user.toSafeJSON(),
+    user: { ...user.toSafeJSON(), hasPin: Boolean(user.pin) },
   });
 };
 
