@@ -3,10 +3,15 @@ const express = require("express");
 const rateLimit = require("express-rate-limit");
 const routes = require('./routes/user.route');
 const logger = require('./middleware/logger');
+const cors = require('./middleware/cors');
 
 require("dotenv").config();
 
 const app = express();
+
+// Allow the configured frontend origin(s) to call the API. The URL is read
+// from FRONTEND_URL at request time; it is never hardcoded here.
+app.use(cors);
 
 app.use(express.json());
 
