@@ -434,7 +434,6 @@ const login = async (req, res) => {
       name: getUser.name,
       email: getUser.email,
       role: getUser.role,
-      pin: getUser.pin,
     },
     process.env.JWT_SECRET,
     {
