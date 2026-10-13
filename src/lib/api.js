@@ -59,12 +59,28 @@ export const api = {
     request("/user/resend-verification", { method: "POST", body }),
   login: (body) => request("/user/login", { method: "POST", body }),
   me: () => request("/user/me", { method: "GET" }),
-  getBalance: (body) => request("/user/balance", { method: "GET", body }),
+  // Session-authenticated balance (no PIN required once logged in).
+  getBalance: () => request("/user/account/balance", { method: "GET" }),
   deposit: (body) => request("/user/deposit", { method: "PUT", body }),
   transfer: (body) => request("/user/transfer", { method: "POST", body }),
   transactions: () => request("/user/transactions", { method: "GET" }),
   createPin: (body) => request("/user/createPin", { method: "POST", body }),
-  pinChange: (body) => request("/user/pinChange", { method: "POST", body }),
+  changePin: (body) => request("/user/change-pin", { method: "PATCH", body }),
+
+  getNotifications: ({ page = 1, limit = 20, filter = "all" } = {}) =>
+    request(
+      `/user/notifications?page=${page}&limit=${limit}&filter=${encodeURIComponent(
+        filter
+      )}`,
+      { method: "GET" }
+    ),
+  getUnreadCount: () =>
+    request("/user/notifications/unread-count", { method: "GET" }),
+  markNotificationRead: (id) =>
+    request(`/user/notifications/${id}/read`, { method: "PATCH" }),
+  markAllNotificationsRead: () =>
+    request("/user/notifications/read-all", { method: "PATCH" }),
+
   adminDeposit: (accountNumber, body) =>
     request(`/user/adminDeposit/${accountNumber}`, { method: "POST", body }),
 };

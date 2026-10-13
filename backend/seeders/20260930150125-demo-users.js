@@ -19,6 +19,11 @@ module.exports = {
       bcrypt.hash('Peter@123', saltRounds),
     ]);
 
+    const [adminPin, userPin] = await Promise.all([
+      bcrypt.hash('1234', saltRounds),
+      bcrypt.hash('4321', saltRounds),
+    ]);
+
     const now = new Date();
 
     await queryInterface.bulkInsert('users', [
@@ -27,7 +32,7 @@ module.exports = {
         name: 'System Admin',
         email: ADMIN_EMAIL,
         phone: '08000000001',
-        pin: '1234',
+        pin: adminPin,
         role: 'admin',
         password: adminPassword,
         accountNumber: ADMIN_ACCOUNT,
@@ -40,7 +45,7 @@ module.exports = {
         name: 'Peter Demo',
         email: USER_EMAIL,
         phone: '08000000002',
-        pin: '4321',
+        pin: userPin,
         role: 'user',
         password: userPassword,
         accountNumber: USER_ACCOUNT,

@@ -18,14 +18,22 @@ const {
   me,
 } = require('../controllers/auth');
 const loginValidation = require('../validators/login');
+const { changePinValidation } = require('../validators/pin');
 const {
   deposit,
   balance,
+  accountBalance,
   transfer,
-  pinUpdate,
   createPin,
+  changePin,
   transactionHistory,
 } = require('../controllers/userActions');
+const {
+  listNotifications,
+  unreadCount,
+  markRead,
+  markAllRead,
+} = require('../controllers/notificationController');
 const addMoney = require('../controllers/admin');
 
 // IP-based throttling is disabled under the automated test environment so the
@@ -69,6 +77,18 @@ const resendLimiter = rateLimit({
   },
 });
 
+const pinLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipInTest,
+  message: {
+    status: 'error',
+    message: 'Too many PIN requests. Please try again later.',
+  },
+});
+
 router.post('/register', validate(registrationValidation), signup);
 router.post('/signup', validate(registrationValidation), signup);
 router.post('/verify-email', verifyLimiter, validate(verifyEmailValidation), verifyEmail);
@@ -78,10 +98,18 @@ router.get('/me', authenticate, me);
 
 router.put('/deposit', authenticate, deposit);
 router.get('/balance', authenticate, userAuthorization, balance);
+router.get('/account/balance', authenticate, accountBalance);
 router.post('/transfer', authenticate, userAuthorization, transfer);
 router.post('/createPin', authenticate, createPin);
-router.post('/pinChange', authenticate, userAuthorization, pinUpdate);
+router.patch('/change-pin', pinLimiter, authenticate, validate(changePinValidation), changePin);
+router.post('/change-pin', pinLimiter, authenticate, validate(changePinValidation), changePin);
+router.post('/pinChange', pinLimiter, authenticate, validate(changePinValidation), changePin);
 router.get('/transactions', authenticate, transactionHistory);
 router.post('/adminDeposit/:accountNumber', authenticate, adminAuthorization, addMoney);
+
+router.get('/notifications', authenticate, listNotifications);
+router.get('/notifications/unread-count', authenticate, unreadCount);
+router.patch('/notifications/read-all', authenticate, markAllRead);
+router.patch('/notifications/:id/read', authenticate, markRead);
 
 module.exports = router;
