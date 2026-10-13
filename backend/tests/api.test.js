@@ -7,6 +7,7 @@ const app = require('../src/app');
 const db = require('../models');
 const emailService = require('../src/services/email');
 const notifications = require('../src/services/notifications');
+const pinAttempts = require('../src/services/pinAttempts');
 
 let server;
 let base;
@@ -877,4 +878,394 @@ test('transaction history lists deposits and transfers', async () => {
   const types = json.transactions.map((t) => t.type).sort();
   assert.ok(types.includes('deposit'));
   assert.ok(types.includes('transfer'));
+});
+
+// ---------------------------------------------------------------------------
+// Transaction PIN security and notifications
+// ---------------------------------------------------------------------------
+
+async function listNotifications(token) {
+  const res = await request('/notifications', { method: 'GET', token });
+  assert.equal(res.status, 200);
+  return res.json.notifications;
+}
+
+test('transaction PIN is stored hashed and excluded from the JWT', async () => {
+  const user = await createFullUser({ pin: '4321' });
+
+  const stored = await db.User.findOne({ where: { email: user.email } });
+  assert.notEqual(stored.pin, '4321');
+  assert.match(stored.pin, /^\$2[aby]\$/, 'PIN must be stored as a bcrypt hash');
+
+  const payload = JSON.parse(
+    Buffer.from(user.token.split('.')[1], 'base64').toString('utf8')
+  );
+  assert.ok(!('pin' in payload), 'the JWT must not carry the PIN');
+
+  const wrong = await request('/balance', {
+    method: 'GET',
+    token: user.token,
+    body: { accountNumber: user.accountNumber, pin: '0000' },
+  });
+  assert.equal(wrong.status, 400);
+  assert.equal(wrong.json.message, 'Invalid PIN.');
+
+  const right = await request('/balance', {
+    method: 'GET',
+    token: user.token,
+    body: { accountNumber: user.accountNumber, pin: '4321' },
+  });
+  assert.equal(right.status, 200);
+});
+
+test('a user cannot transfer from an account they do not own', async () => {
+  const attacker = await createFullUser();
+  const victim = await createFullUser();
+  const receiver = await createFullUser();
+
+  await request('/deposit', {
+    method: 'PUT',
+    token: victim.token,
+    body: { accountNumber: victim.accountNumber, amount: '1000' },
+  });
+
+  const res = await request('/transfer', {
+    method: 'POST',
+    token: attacker.token,
+    body: {
+      from: victim.accountNumber,
+      to: receiver.accountNumber,
+      amount: '100',
+      pin: attacker.pin,
+    },
+  });
+  assert.equal(res.status, 403);
+});
+
+test('deposit creates a deposit notification for the account owner', async () => {
+  const user = await createFullUser();
+
+  const depositRes = await request('/deposit', {
+    method: 'PUT',
+    token: user.token,
+    body: { accountNumber: user.accountNumber, amount: '700' },
+  });
+  assert.equal(depositRes.status, 200);
+
+  const { status, json } = await request('/notifications', {
+    method: 'GET',
+    token: user.token,
+  });
+  assert.equal(status, 200);
+  const deposit = json.notifications.find(
+    (n) => n.type === 'deposit' && n.amount === 700
+  );
+  assert.ok(deposit, 'a deposit notification should exist');
+  assert.equal(deposit.isRead, false);
+
+  const unread = await request('/notifications/unread-count', {
+    method: 'GET',
+    token: user.token,
+  });
+  assert.ok(unread.json.unreadCount >= 1);
+});
+
+test('transfer creates matching debit and credit notifications', async () => {
+  const sender = await createFullUser();
+  const receiver = await createFullUser();
+
+  await request('/deposit', {
+    method: 'PUT',
+    token: sender.token,
+    body: { accountNumber: sender.accountNumber, amount: '1000' },
+  });
+
+  const transfer = await request('/transfer', {
+    method: 'POST',
+    token: sender.token,
+    body: {
+      from: sender.accountNumber,
+      to: receiver.accountNumber,
+      amount: '250',
+      pin: sender.pin,
+    },
+  });
+  assert.equal(transfer.status, 200);
+
+  const senderList = (
+    await request('/notifications', { method: 'GET', token: sender.token })
+  ).json.notifications;
+  const receiverList = (
+    await request('/notifications', { method: 'GET', token: receiver.token })
+  ).json.notifications;
+
+  const debit = senderList.find((n) => n.type === 'debit' && n.amount === 250);
+  const credit = receiverList.find((n) => n.type === 'credit' && n.amount === 250);
+
+  assert.ok(debit, 'sender should have a debit notification');
+  assert.ok(credit, 'receiver should have a credit notification');
+  assert.equal(debit.transactionId, credit.transactionId);
+});
+
+test('a retried transfer does not duplicate notifications', async () => {
+  const sender = await createFullUser();
+  const receiver = await createFullUser();
+
+  await request('/deposit', {
+    method: 'PUT',
+    token: sender.token,
+    body: { accountNumber: sender.accountNumber, amount: '1000' },
+  });
+
+  const reference = `retry-ref-${Date.now()}`;
+  const body = {
+    from: sender.accountNumber,
+    to: receiver.accountNumber,
+    amount: '300',
+    pin: sender.pin,
+    reference,
+  };
+
+  const first = await request('/transfer', { method: 'POST', token: sender.token, body });
+  assert.equal(first.status, 200);
+
+  const replay = await request('/transfer', { method: 'POST', token: sender.token, body });
+  assert.equal(replay.status, 409);
+
+  const list = (
+    await request('/notifications', { method: 'GET', token: sender.token })
+  ).json.notifications;
+  const matches = list.filter(
+    (n) => n.type === 'debit' && n.reference === reference
+  );
+  assert.equal(matches.length, 1, 'no duplicate debit notifications on retry');
+});
+
+test('a failed transfer notifies the initiator', async () => {
+  const sender = await createFullUser();
+  const receiver = await createFullUser();
+
+  const res = await request('/transfer', {
+    method: 'POST',
+    token: sender.token,
+    body: {
+      from: sender.accountNumber,
+      to: receiver.accountNumber,
+      amount: '500',
+      pin: sender.pin,
+    },
+  });
+  assert.equal(res.status, 400);
+
+  const list = (
+    await request('/notifications', { method: 'GET', token: sender.token })
+  ).json.notifications;
+  assert.ok(list.some((n) => n.type === 'failed'));
+  assert.ok(!list.some((n) => n.type === 'debit'));
+});
+
+test('notifications are isolated to the authenticated account', async () => {
+  const alice = await createFullUser();
+  const bob = await createFullUser();
+
+  await request('/deposit', {
+    method: 'PUT',
+    token: alice.token,
+    body: { accountNumber: alice.accountNumber, amount: '300' },
+  });
+
+  const aliceList = (
+    await request('/notifications', { method: 'GET', token: alice.token })
+  ).json.notifications;
+  assert.ok(aliceList.length >= 1);
+  const aliceIds = new Set(aliceList.map((n) => n.id));
+
+  const bobList = (
+    await request('/notifications', { method: 'GET', token: bob.token })
+  ).json.notifications;
+  assert.ok(
+    bobList.every((n) => !aliceIds.has(n.id)),
+    'a user must not see another user notifications'
+  );
+
+  const steal = await request(`/notifications/${aliceList[0].id}/read`, {
+    method: 'PATCH',
+    token: bob.token,
+  });
+  assert.equal(steal.status, 404);
+});
+
+test('notifications can be marked read individually and all at once', async () => {
+  const user = await createFullUser();
+
+  await request('/deposit', {
+    method: 'PUT',
+    token: user.token,
+    body: { accountNumber: user.accountNumber, amount: '100' },
+  });
+  await request('/deposit', {
+    method: 'PUT',
+    token: user.token,
+    body: { accountNumber: user.accountNumber, amount: '200' },
+  });
+
+  const list = (
+    await request('/notifications', { method: 'GET', token: user.token })
+  ).json.notifications;
+  assert.ok(list.length >= 2);
+
+  const read = await request(`/notifications/${list[0].id}/read`, {
+    method: 'PATCH',
+    token: user.token,
+  });
+  assert.equal(read.status, 200);
+  assert.equal(read.json.notification.isRead, true);
+
+  const all = await request('/notifications/read-all', {
+    method: 'PATCH',
+    token: user.token,
+  });
+  assert.equal(all.status, 200);
+  assert.equal(all.json.unreadCount, 0);
+
+  const unread = await request('/notifications/unread-count', {
+    method: 'GET',
+    token: user.token,
+  });
+  assert.equal(unread.json.unreadCount, 0);
+});
+
+test('notifications can be filtered by category', async () => {
+  const user = await createFullUser();
+
+  await request('/deposit', {
+    method: 'PUT',
+    token: user.token,
+    body: { accountNumber: user.accountNumber, amount: '150' },
+  });
+
+  const filtered = await request('/notifications?filter=deposit', {
+    method: 'GET',
+    token: user.token,
+  });
+  assert.equal(filtered.status, 200);
+  assert.ok(filtered.json.notifications.length >= 1);
+  assert.ok(filtered.json.notifications.every((n) => n.type === 'deposit'));
+});
+
+test('notifications require authentication', async () => {
+  const list = await request('/notifications', { method: 'GET' });
+  assert.equal(list.status, 403);
+});
+
+test('changing the PIN updates the hash, notifies, and emails the user', async () => {
+  const user = await createFullUser({ pin: '1234' });
+
+  const res = await request('/change-pin', {
+    method: 'PATCH',
+    token: user.token,
+    body: { currentPin: '1234', newPin: '5678', confirmPin: '5678' },
+  });
+  assert.equal(res.status, 200);
+
+  const stored = await db.User.findOne({ where: { email: user.email } });
+  assert.match(stored.pin, /^\$2[aby]\$/);
+  assert.notEqual(stored.pin, '5678');
+
+  const oldPin = await request('/balance', {
+    method: 'GET',
+    token: user.token,
+    body: { accountNumber: user.accountNumber, pin: '1234' },
+  });
+  assert.equal(oldPin.status, 400);
+
+  const newPin = await request('/balance', {
+    method: 'GET',
+    token: user.token,
+    body: { accountNumber: user.accountNumber, pin: '5678' },
+  });
+  assert.equal(newPin.status, 200);
+
+  const list = (
+    await request('/notifications', { method: 'GET', token: user.token })
+  ).json.notifications;
+  assert.ok(list.some((n) => n.type === 'pin_changed'));
+
+  const email = emailService
+    .getCapturedMessages()
+    .find((m) => m.to === user.email && /PIN was changed/i.test(m.subject));
+  assert.ok(email, 'a PIN-changed email should be sent');
+});
+
+test('changing the PIN rejects an incorrect current PIN', async () => {
+  const user = await createFullUser({ pin: '1234' });
+
+  const res = await request('/change-pin', {
+    method: 'PATCH',
+    token: user.token,
+    body: { currentPin: '9999', newPin: '5678', confirmPin: '5678' },
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.json.message, /current PIN is incorrect/i);
+});
+
+test('changing the PIN validates the new PIN', async () => {
+  const user = await createFullUser({ pin: '1234' });
+
+  const mismatch = await request('/change-pin', {
+    method: 'PATCH',
+    token: user.token,
+    body: { currentPin: '1234', newPin: '5678', confirmPin: '5679' },
+  });
+  assert.equal(mismatch.status, 400);
+
+  const same = await request('/change-pin', {
+    method: 'PATCH',
+    token: user.token,
+    body: { currentPin: '1234', newPin: '1234', confirmPin: '1234' },
+  });
+  assert.equal(same.status, 400);
+  assert.match(same.json.message, /different/i);
+
+  const badFormat = await request('/change-pin', {
+    method: 'PATCH',
+    token: user.token,
+    body: { currentPin: '1234', newPin: '12', confirmPin: '12' },
+  });
+  assert.equal(badFormat.status, 400);
+});
+
+test('repeated incorrect PIN changes are locked and raise a security alert', async () => {
+  const user = await createFullUser({ pin: '1234' });
+
+  for (let i = 0; i < 5; i += 1) {
+    const res = await request('/change-pin', {
+      method: 'PATCH',
+      token: user.token,
+      body: { currentPin: '0000', newPin: '5678', confirmPin: '5678' },
+    });
+    assert.equal(res.status, 400);
+  }
+
+  const locked = await request('/change-pin', {
+    method: 'PATCH',
+    token: user.token,
+    body: { currentPin: '1234', newPin: '5678', confirmPin: '5678' },
+  });
+  assert.equal(locked.status, 429);
+
+  const list = (
+    await request('/notifications', { method: 'GET', token: user.token })
+  ).json.notifications;
+  assert.ok(list.some((n) => n.type === 'security_alert'));
+
+  pinAttempts.resetAll();
+});
+
+test('change PIN requires authentication', async () => {
+  const res = await request('/change-pin', {
+    method: 'PATCH',
+    body: { currentPin: '1234', newPin: '5678', confirmPin: '5678' },
+  });
+  assert.equal(res.status, 403);
 });

@@ -59,6 +59,33 @@ function readPem(keys) {
   return undefined;
 }
 
+// Accepts a PEM that came through process.env (for example from Render's
+// Environment tab). Handles values pasted with literal "\n" sequences and
+// rejects partial values such as a lone BEGIN line.
+function normalizePem(value) {
+  if (!value) {
+    return undefined;
+  }
+
+  const pem = value.replace(/\\n/g, '\n').trim();
+
+  return pem.includes('-----BEGIN') && pem.includes('-----END') ? pem : undefined;
+}
+
+// Prefer a full PEM from process.env (Render / any host that injects env vars),
+// then fall back to recovering it from the raw .env files (local development).
+function readCa(keys) {
+  for (const key of keys) {
+    const pem = normalizePem(process.env[key]);
+
+    if (pem) {
+      return pem;
+    }
+  }
+
+  return readPem(keys);
+}
+
 function baseOptions() {
   return {
     dialect: 'postgres',
@@ -137,17 +164,22 @@ function buildManagedConfig() {
     throw new Error('Database configuration is missing a database name.');
   }
 
-  // Aiven requires TLS. Certificate verification is always enabled and the
-  // service CA (provided in the env file) is trusted when available.
+  // Aiven requires TLS. Certificate verification is enabled by default and the
+  // service CA is trusted when available (from process.env on Render, or from
+  // the local .env files).
   const ssl = {
     require: true,
     rejectUnauthorized: true,
   };
 
-  const ca = readPem(['CAC', 'DB_SSL_CA', 'SSL_CA', 'DB_CA_CERT']);
+  const ca = readCa(['CAC', 'DB_SSL_CA', 'SSL_CA', 'DB_CA_CERT']);
 
   if (ca) {
     ssl.ca = ca;
+  } else if (process.env.DB_SSL_REJECT_UNAUTHORIZED === 'false') {
+    // Escape hatch only. Still encrypted, but the server identity is not
+    // verified. Prefer providing the CA instead.
+    ssl.rejectUnauthorized = false;
   }
 
   config.dialectOptions = { ssl };
@@ -169,7 +201,7 @@ function buildTestConfig() {
 
   if (process.env.DB_SSL_TEST === 'true') {
     const ssl = { require: true, rejectUnauthorized: true };
-    const ca = readPem(['DB_SSL_CA_TEST', 'CAC_TEST']);
+    const ca = readCa(['DB_SSL_CA_TEST', 'CAC_TEST']);
 
     if (ca) {
       ssl.ca = ca;

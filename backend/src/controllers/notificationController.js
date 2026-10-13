@@ -37,6 +37,7 @@ const listNotifications = async (req, res) => {
 
   const { rows, count } = await db.Notification.findAndCountAll({
     where,
+    attributes: { exclude: ["dedupeKey"] },
     order: [["createdAt", "DESC"]],
     limit,
     offset,
@@ -81,6 +82,7 @@ const markRead = async (req, res) => {
   // Scoped by userId so a user can never mark another user's notification.
   const notification = await db.Notification.findOne({
     where: { id, userId: req.user.id },
+    attributes: { exclude: ["dedupeKey"] },
   });
 
   if (!notification) {
@@ -102,7 +104,7 @@ const markRead = async (req, res) => {
   return res.status(200).json({
     status: "success",
     notification,
-    unreadCount: count,
+    unreadCount: unread,
   });
 };
 
