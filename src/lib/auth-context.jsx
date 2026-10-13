@@ -18,14 +18,15 @@ export function AuthProvider({ children }) {
     if (token) {
       try {
         const payload = JSON.parse(atob(token.split(".")[1]));
-        setUser({
+        const userData = {
           id: payload.id,
           name: payload.name,
           email: payload.email,
           role: payload.role,
           accountNumber: payload.accountNum || payload.accountNumber,
           pin: payload.pin,
-        });
+        };
+        setUser(userData);
       } catch {
         setUser(null);
       }

@@ -195,26 +195,36 @@ const verifyEmail = async (req, res) => {
   }
 
   let user;
-  await db.sequelize.transaction(async (transaction) => {
-    const locked = await db.EmailVerification.findOne({
-      where: { email: normalizedEmail },
-      lock: transaction.LOCK.UPDATE,
-      transaction,
+  try {
+    await db.sequelize.transaction(async (transaction) => {
+      const locked = await db.EmailVerification.findOne({
+        where: { email: normalizedEmail },
+        lock: transaction.LOCK.UPDATE,
+        transaction,
+      });
+
+      if (
+        !locked ||
+        locked.usedAt ||
+        locked.expiresAt.getTime() < Date.now() ||
+        locked.attempts >= MAX_ATTEMPTS ||
+        !hashesMatch(hashCode(code), locked.codeHash)
+      ) {
+        throw httpError(400, "Invalid or expired verification code");
+      }
+
+      // Invalidate the single-use code inside the transaction.
+      await locked.destroy({ transaction });
     });
-
-    if (
-      !locked ||
-      locked.usedAt ||
-      locked.expiresAt.getTime() < Date.now() ||
-      locked.attempts >= MAX_ATTEMPTS ||
-      !hashesMatch(hashCode(code), locked.codeHash)
-    ) {
-      throw httpError(400, "Invalid or expired verification code");
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        status: "error",
+        message: error.message,
+      });
     }
-
-    // Invalidate the single-use code inside the transaction.
-    await locked.destroy({ transaction });
-  });
+    throw error;
+  }
 
   // Create the user outside the transaction so an account-number collision can
   // be retried with a freshly generated number.
@@ -391,6 +401,25 @@ const login = async (req, res) => {
   const getUser = await db.User.findOne({ where: { email: normalizedEmail } });
 
   if (!getUser) {
+    // A pending (unverified) signup should tell the user to verify rather than
+    // report invalid credentials.
+    const pending = await db.EmailVerification.findOne({
+      where: { email: normalizedEmail },
+    });
+
+    if (pending && pending.data && pending.data.passwordHash) {
+      const matchesPendingPassword = await bcrypt.compare(
+        password,
+        pending.data.passwordHash
+      );
+      if (matchesPendingPassword) {
+        return res.status(403).json({
+          status: "error",
+          message: "Please verify your email before logging in.",
+        });
+      }
+    }
+
     return res.status(401).json({
       status: "error",
       message: "Invalid email or password",
@@ -400,7 +429,7 @@ const login = async (req, res) => {
   if (!getUser.emailVerified) {
     return res.status(403).json({
       status: "error",
-      message: "Please verify your email before signing in",
+      message: "Please verify your email before logging in.",
     });
   }
 

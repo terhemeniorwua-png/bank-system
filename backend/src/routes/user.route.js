@@ -28,11 +28,17 @@ const {
 } = require('../controllers/userActions');
 const addMoney = require('../controllers/admin');
 
+// IP-based throttling is disabled under the automated test environment so the
+// suite remains deterministic; per-email cooldowns and attempt limits are still
+// enforced by the controller.
+const skipInTest = () => process.env.NODE_ENV === 'test';
+
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 20,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: skipInTest,
   message: {
     status: 'error',
     message: 'Too many requests. Please try again later.',
@@ -44,6 +50,7 @@ const verifyLimiter = rateLimit({
   limit: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: skipInTest,
   message: {
     status: 'error',
     message: 'Too many verification attempts. Please try again later.',
@@ -55,6 +62,7 @@ const resendLimiter = rateLimit({
   limit: 10,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: skipInTest,
   message: {
     status: 'error',
     message: 'Too many requests. Please try again later.',

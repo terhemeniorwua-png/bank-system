@@ -69,7 +69,7 @@ function getStatusIcon(status) {
   return CircleCheck;
 }
 
-export default function TransactionItem({ transaction, currentAccountNumber }) {
+function TransactionItem({ transaction, currentAccountNumber }) {
   const Icon = getIcon(transaction?.type);
   const StatusIcon = getStatusIcon(transaction?.status);
   const isOutgoing =
@@ -111,3 +111,5 @@ export default function TransactionItem({ transaction, currentAccountNumber }) {
     </div>
   );
 }
+
+export default TransactionItem;

@@ -24,22 +24,21 @@ export default function TransactionsPage() {
       return;
     }
     if (user) {
+      const loadTx = async () => {
+        setLoading(true);
+        setError(null);
+        try {
+          const res = await api.transactions();
+          setTransactions(res?.transactions || []);
+        } catch (e) {
+          setError(e.message || "Failed to load transactions");
+        } finally {
+          setLoading(false);
+        }
+      };
       loadTx();
     }
-  }, [user, authLoading]);
-
-  const loadTx = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await api.transactions();
-      setTransactions(res?.transactions || []);
-    } catch (e) {
-      setError(e.message || "Failed to load transactions");
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [user, authLoading, router]);
 
   if (authLoading) return null;
 
@@ -63,9 +62,9 @@ export default function TransactionsPage() {
         {!loading && !error && transactions.length > 0 && (
           <div className="bg-white rounded-2xl border border-border overflow-hidden">
             <div className="divide-y divide-border">
-              {transactions.map((tx) => (
+              {transactions.map((tx, idx) => (
                 <TransactionItem
-                  key={tx.id || tx.reference || Math.random()}
+                  key={tx.id || tx.reference || idx}
                   transaction={tx}
                   currentAccountNumber={user?.accountNumber}
                 />

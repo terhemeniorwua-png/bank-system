@@ -26,10 +26,10 @@ export default function DepositPage() {
       router.push("/login");
       return;
     }
-    if (user) {
-      setForm((f) => ({ ...f, accountNumber: user.accountNumber }));
+    if (user && !form.accountNumber) {
+      setForm((prev) => ({ ...prev, accountNumber: user.accountNumber }));
     }
-  }, [user, authLoading]);
+  }, [user, authLoading, router]);
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });

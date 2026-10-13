@@ -56,9 +56,9 @@ export default function RecentTransactions({ transactions, loading, error, onRet
       </div>
       <div className="bg-white rounded-2xl border border-border overflow-hidden">
         <div className="divide-y divide-border">
-          {recentTx.map((tx) => (
+          {recentTx.map((tx, idx) => (
             <TransactionItem
-              key={tx.id || tx.reference || Math.random()}
+              key={tx.id || tx.reference || idx}
               transaction={tx}
               currentAccountNumber={user?.accountNumber}
             />

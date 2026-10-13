@@ -2,6 +2,7 @@ const { z } = require("zod");
 
 const passwordSchema = z
   .string()
+  .trim()
   .regex(
     /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{6,}$/,
     "Password must be at least 6 characters and include an uppercase letter, a lowercase letter, a number and a special character"

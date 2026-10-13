@@ -19,10 +19,11 @@ module.exports = (sequelize, DataTypes) => {
       });
     }
 
-    // Serialise the user without ever exposing the password hash.
+    // Serialise the user without ever exposing the password hash or PIN.
     toSafeJSON() {
       const values = { ...this.get() };
       delete values.password;
+      delete values.pin;
       return values;
     }
   }

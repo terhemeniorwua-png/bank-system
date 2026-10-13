@@ -28,7 +28,7 @@ export default function TransferPage() {
     if (!authLoading && !user) {
       router.push("/login");
     }
-  }, [user, authLoading]);
+  }, [user, authLoading, router]);
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });

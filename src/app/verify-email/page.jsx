@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   Landmark,
@@ -16,9 +16,16 @@ import api from "@/lib/api";
 const RESEND_COOLDOWN_SECONDS = 60;
 const CODE_LENGTH = 6;
 
-export default function VerifyEmailPage() {
+function VerifyEmailContent() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const searchParams = useSearchParams();
+  const queryEmail = (searchParams.get("email") || "").trim().toLowerCase();
+  const [storedEmail] = useState(() =>
+    typeof window !== "undefined"
+      ? (sessionStorage.getItem("bbt_pending_email") || "").trim().toLowerCase()
+      : ""
+  );
+  const email = queryEmail || storedEmail;
   const [digits, setDigits] = useState(Array(CODE_LENGTH).fill(""));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -29,15 +36,7 @@ export default function VerifyEmailPage() {
   const inputRefs = useRef([]);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const fromQuery = params.get("email") || "";
-    const fromStorage = sessionStorage.getItem("bbt_pending_email") || "";
-    const resolved = fromQuery || fromStorage;
-    setEmail(resolved);
-
-    if (fromStorage) {
-      sessionStorage.removeItem("bbt_pending_email");
-    }
+    sessionStorage.removeItem("bbt_pending_email");
     sessionStorage.removeItem("bbt_pending_name");
   }, []);
 
@@ -99,7 +98,7 @@ export default function VerifyEmailPage() {
     setInfo(null);
     try {
       const result = await api.verifyEmail({ email, code });
-      setSuccess(result.user);
+      setSuccess(result);
       setInfo(null);
       setError(null);
     } catch (err) {
@@ -133,7 +132,7 @@ export default function VerifyEmailPage() {
   const handleCopyAccount = async () => {
     if (!success) return;
     try {
-      await navigator.clipboard.writeText(String(success.accountNumber));
+      await navigator.clipboard.writeText(String(success.user.accountNumber));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -157,7 +156,7 @@ export default function VerifyEmailPage() {
           <div className="bg-white rounded-2xl shadow-xl p-6">
             <p className="text-xs text-text-secondary mb-1">ACCOUNT NUMBER</p>
             <p className="text-2xl font-bold text-text-primary tracking-widest mb-4">
-              {success.accountNumber}
+              {success.user.accountNumber}
             </p>
             <button
               onClick={handleCopyAccount}
@@ -294,7 +293,27 @@ export default function VerifyEmailPage() {
             Start over
           </Link>
         </p>
+        <p className="text-center text-sm text-text-secondary mt-6">
+          Made a mistake?{" "}
+          <Link href="/register" className="text-primary font-medium hover:text-primary-deep">
+            Start over
+          </Link>
+        </p>
       </div>
     </div>
+  );
+}
+
+export default function VerifyEmailPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-pale-bg flex items-center justify-center">
+          <Loader2 className="w-8 h-8 text-primary animate-spin" />
+        </div>
+      }
+    >
+      <VerifyEmailContent />
+    </Suspense>
   );
 }
