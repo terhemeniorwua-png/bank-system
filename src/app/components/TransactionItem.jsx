@@ -3,6 +3,7 @@
 import {
   ArrowUpRight,
   ArrowDownLeft,
+  ArrowLeftRight,
   CreditCard,
   Building2,
   Phone,
