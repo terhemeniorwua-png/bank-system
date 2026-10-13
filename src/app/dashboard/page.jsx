@@ -26,27 +26,91 @@ export default function Dashboard() {
     }
 
     if (user) {
+      const loadDashboard = async () => {
+        setLoading(true);
+        setError(null);
+        try {
+          const [txRes, balanceRes] = await Promise.allSettled([
+            api.transactions(),
+            api.getBalance({ pin: user.pin, accountNumber: user.accountNumber }),
+          ]);
+          if (txRes.status === "fulfilled") {
+            setTransactions(txRes.value?.transactions || []);
+          }
+          let balanceAmount = 0;
+          if (balanceRes.status === "fulfilled" && balanceRes.value) {
+            const balStr = balanceRes.value.balance || balanceRes.value;
+            if (typeof balStr === "string") {
+              const match = balStr.match(/(\d+(?:\.\d+)?)/);
+              if (match) {
+                balanceAmount = parseInt(match[1], 10);
+              }
+            } else if (typeof balStr === "number") {
+              balanceAmount = balStr;
+            } else if (balanceRes.value.amount !== undefined) {
+              balanceAmount = balanceRes.value.amount;
+            }
+          }
+          setAccount({
+            name: user.name,
+            accountNumber: user.accountNumber,
+            amount: balanceAmount,
+            role: user.role,
+          });
+        } catch (e) {
+          setError(e.message || "Failed to load dashboard");
+          setAccount({
+            name: user.name,
+            accountNumber: user.accountNumber,
+            amount: 0,
+            role: user.role,
+          });
+        } finally {
+          setLoading(false);
+        }
+      };
       loadDashboard();
     }
-  }, [user, authLoading]);
-
-  const loadDashboard = async () => {
+  }, [user, authLoading, router]);
     setLoading(true);
     setError(null);
     try {
-      const [txRes] = await Promise.allSettled([api.transactions()]);
+      const [txRes, balanceRes] = await Promise.allSettled([
+        api.transactions(),
+        api.getBalance({ pin: user.pin, accountNumber: user.accountNumber }),
+      ]);
       if (txRes.status === "fulfilled") {
         setTransactions(txRes.value?.transactions || []);
       }
-      // Balance comes from backend; if needed we can fetch with PIN but the token holds account
+      let balanceAmount = 0;
+      if (balanceRes.status === "fulfilled" && balanceRes.value) {
+        // The API returns { balance: "Your balance is 1234" }
+        const balStr = balanceRes.value.balance || balanceRes.value;
+        if (typeof balStr === "string") {
+          const match = balStr.match(/(\d+(?:\.\d+)?)/);
+          if (match) {
+            balanceAmount = parseInt(match[1], 10);
+          }
+        } else if (typeof balStr === "number") {
+          balanceAmount = balStr;
+        } else if (balanceRes.value.amount !== undefined) {
+          balanceAmount = balanceRes.value.amount;
+        }
+      }
       setAccount({
         name: user.name,
         accountNumber: user.accountNumber,
-        amount: 0, // real balance will be shown after pin auth or fetch
+        amount: balanceAmount,
         role: user.role,
       });
     } catch (e) {
       setError(e.message || "Failed to load dashboard");
+      setAccount({
+        name: user.name,
+        accountNumber: user.accountNumber,
+        amount: 0,
+        role: user.role,
+      });
     } finally {
       setLoading(false);
     }

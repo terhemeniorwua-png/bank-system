@@ -1,0 +1,24 @@
+{
+  "name": "bbt-cash-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "BBT Cash mobile banking backend",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js",
+    "test": "NODE_ENV=test node --test tests/api.test.js"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
+    "jsonwebtoken": "^9.0.3",
+    "nodemailer": "^10.1.0",
+    "pg": "^8.13.1",
+    "sequelize": "^6.37.5",
+    "sequelize-cli": "^6.6.2",
+    "zod": "^4.6.5"
+  }
+}

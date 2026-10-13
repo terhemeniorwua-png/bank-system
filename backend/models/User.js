@@ -13,6 +13,10 @@ module.exports = (sequelize, DataTypes) => {
         foreignKey: 'receiverId',
         as: 'receivedTransactions',
       });
+      User.hasMany(models.EmailNotification, {
+        foreignKey: 'userId',
+        as: 'emailNotifications',
+      });
     }
 
     // Serialise the user without ever exposing the password hash.
@@ -70,6 +74,15 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: 0,
         validate: { min: 0 },
+      },
+      emailVerified: {
+        type: DataTypes.BOOLEAN,
+        allowNull: false,
+        defaultValue: true,
+      },
+      emailVerifiedAt: {
+        type: DataTypes.DATE,
+        allowNull: true,
       },
     },
     {

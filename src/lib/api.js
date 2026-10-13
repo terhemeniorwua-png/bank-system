@@ -53,8 +53,12 @@ async function request(endpoint, options = {}) {
 }
 
 export const api = {
-  register: (body) => request("/user/register", { method: "POST", body }),
+  signup: (body) => request("/user/signup", { method: "POST", body }),
+  verifyEmail: (body) => request("/user/verify-email", { method: "POST", body }),
+  resendVerification: (body) =>
+    request("/user/resend-verification", { method: "POST", body }),
   login: (body) => request("/user/login", { method: "POST", body }),
+  me: () => request("/user/me", { method: "GET" }),
   getBalance: (body) => request("/user/balance", { method: "GET", body }),
   deposit: (body) => request("/user/deposit", { method: "PUT", body }),
   transfer: (body) => request("/user/transfer", { method: "POST", body }),

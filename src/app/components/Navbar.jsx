@@ -21,9 +21,17 @@ const navItems = [
   { href: "/more", label: "More", icon: Ellipsis },
 ];
 
+// Full-screen auth pages render their own chrome and must not show the
+// fixed bottom application navigation.
+const AUTH_PAGES = ["/register", "/login", "/verify-email"];
+
 export default function Navbar() {
   const pathname = usePathname();
   const [isActionSheetOpen, setIsActionSheetOpen] = useState(false);
+
+  if (AUTH_PAGES.includes(pathname)) {
+    return null;
+  }
 
   const handleCenterClick = (e) => {
     e.preventDefault();

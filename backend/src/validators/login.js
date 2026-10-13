@@ -1,12 +1,8 @@
-const { z, email } = require('zod');
+const { z } = require('zod');
 
 const loginValidation = z.object({
-    email: z.string().trim().email(),
-    password: z.string().min(6, /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{6,}$/, "Invalid password")
+  email: z.string().trim().toLowerCase().email('Invalid email address'),
+  password: z.string().min(6, 'Password must be at least 6 characters'),
 });
 
 module.exports = loginValidation;
-
-
-
-
