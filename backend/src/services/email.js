@@ -342,7 +342,7 @@ async function sendBrandedEmail({ to, subject, heading, greetingName, paragraphs
 }
 
 async function deliverViaBrevoApi(message) {
-  const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+  const res = await fetch(process.env.URL, {
     method: 'POST',
     headers: {
       'api-key': process.env.BREVO_API_KEY,
