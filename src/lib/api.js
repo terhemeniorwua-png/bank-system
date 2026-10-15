@@ -91,6 +91,12 @@ export const api = {
   transactions: () => request("/user/transactions", { method: "GET" }),
   createPin: (body) => request("/user/createPin", { method: "POST", body }),
   changePin: (body) => request("/user/change-pin", { method: "PATCH", body }),
+  // Confirms the current PIN without changing anything (step 1 of the reset flow).
+  verifyPin: (body) => request("/user/verify-pin", { method: "POST", body }),
+
+  // Profile picture — the image is sent as a base64 data URL in JSON.
+  updateAvatar: (body) => request("/user/avatar", { method: "POST", body }),
+  removeAvatar: () => request("/user/avatar", { method: "DELETE" }),
 
   // Payments — catalogs and histories.
   getNetworks: () => request("/user/data/networks", { method: "GET" }),

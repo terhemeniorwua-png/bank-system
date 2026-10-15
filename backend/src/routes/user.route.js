@@ -20,6 +20,15 @@ const {
 const loginValidation = require('../validators/login');
 const { changePinValidation } = require('../validators/pin');
 const {
+  avatarUpdateValidation,
+  verifyPinValidation,
+} = require('../validators/avatar');
+const {
+  updateAvatar,
+  removeAvatar,
+  verifyCurrentPin,
+} = require('../controllers/profileController');
+const {
   billValidateValidation,
   billPayValidation,
   dataPurchaseValidation,
@@ -112,12 +121,29 @@ const pinLimiter = rateLimit({
   },
 });
 
+const avatarLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: skipInTest,
+  message: {
+    status: 'error',
+    message: 'Too many picture updates. Please try again later.',
+  },
+});
+
 router.post('/register', validate(registrationValidation), signup);
 router.post('/signup', validate(registrationValidation), signup);
 router.post('/verify-email', verifyLimiter, validate(verifyEmailValidation), verifyEmail);
 router.post('/resend-verification', resendLimiter, validate(resendVerificationValidation), resendVerification);
 router.post('/login', authLimiter, validate(loginValidation), login);
 router.get('/me', authenticate, me);
+
+// Profile picture: the image is sent as a base64 data URL in a JSON body and
+// is only stored after the session has been authenticated.
+router.post('/avatar', avatarLimiter, authenticate, validate(avatarUpdateValidation), updateAvatar);
+router.delete('/avatar', avatarLimiter, authenticate, removeAvatar);
 
 router.put('/deposit', authenticate, deposit);
 router.get('/balance', authenticate, userAuthorization, balance);
@@ -149,6 +175,9 @@ router.get('/airtime/history', authenticate, getAirtimeHistory);
 router.patch('/change-pin', pinLimiter, authenticate, validate(changePinValidation), changePin);
 router.post('/change-pin', pinLimiter, authenticate, validate(changePinValidation), changePin);
 router.post('/pinChange', pinLimiter, authenticate, validate(changePinValidation), changePin);
+// Step 1 of the step-by-step reset flow: confirm the old PIN before the user
+// is allowed to choose a new one. Shares the lockout counter with change-pin.
+router.post('/verify-pin', pinLimiter, authenticate, validate(verifyPinValidation), verifyCurrentPin);
 router.get('/transactions', authenticate, transactionHistory);
 router.post('/adminDeposit/:accountNumber', authenticate, adminAuthorization, addMoney);
 

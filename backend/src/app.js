@@ -13,7 +13,9 @@ const app = express();
 // from FRONTEND_URL at request time; it is never hardcoded here.
 app.use(cors);
 
-app.use(express.json());
+// 2 mb allows the base64 profile-picture upload; every other endpoint only
+// ever sends small JSON bodies.
+app.use(express.json({ limit: "2mb" }));
 
 // Rate limiting
 

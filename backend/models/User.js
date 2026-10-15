@@ -76,6 +76,12 @@ module.exports = (sequelize, DataTypes) => {
         defaultValue: 0,
         validate: { min: 0 },
       },
+      // Profile picture stored as a base64 data URL. Kept small on the client
+      // (JPEG/PNG/WebP, max 1 MB) so a single TEXT column is sufficient.
+      avatar: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
       emailVerified: {
         type: DataTypes.BOOLEAN,
         allowNull: false,
