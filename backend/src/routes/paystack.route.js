@@ -1,7 +1,15 @@
-const crypto = require("node:crypto");
-const express = require("express");
-const { Account, Deposit } = require("../models/payments");
-const { createPendingDeposit, verifyTransaction, creditDeposit } = require("../services/deposit.service");
+'use strict';
+
+const crypto = require('node:crypto');
+const express = require('express');
+const { Transaction } = require('../../models');
+const {
+  createPendingDeposit,
+  markFailed,
+  verifyTransaction,
+  creditDeposit,
+} = require('../services/deposit.service');
+
 
 const PAYSTACK = "https://api.paystack.co";
 const secret = process.env.PAYSTACK_SECRET_KEY;

@@ -1,3 +1,7 @@
+
+const db = require('../../models');
+const { sequelize, User, Transaction, Notification } = db;
+
 const { sequelize, Account, Deposit, LedgerEntry } = require("../models/payments");
 require("dotenv")
 const PAYSTACK = process.env.PAYSTACK_URL;
