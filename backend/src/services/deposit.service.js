@@ -1,92 +1,92 @@
+'use strict';
 
 const db = require('../../models');
 const { sequelize, User, Transaction, Notification } = db;
 
-const { sequelize, Account, Deposit, LedgerEntry } = require("../models/payments");
-require("dotenv")
-const PAYSTACK = process.env.PAYSTACK_URL;
+const PAYSTACK = 'https://api.paystack.co';
 
-async function createPendingDeposit({ userId, amountKobo, reference }) {
-  const [account] = await Account.findOrCreate({
-    where: { userId },
-    defaults: { userId },
-  });
-
-  return Deposit.create({
-    accountId: account.id,
+async function createPendingDeposit({ user, amountNaira, reference }) {
+  return Transaction.create({
+    type: 'deposit',
+    status: 'pending', // the model default is 'success', so always set this explicitly
+    amount: amountNaira,
+    receiverId: user.id,
+    receiverAccountNumber: user.accountNumber,
     reference,
-    amountKobo,
-    currency: account.currency,
-    status: "PENDING",
+    metadata: { provider: 'paystack' },
   });
 }
 
-// Ask Paystack directly, so we never credit based on the webhook payload alone
+async function markFailed(reference) {
+  await Transaction.update(
+    { status: 'failed' },
+    { where: { reference, status: 'pending' } }
+  );
+}
+
+// Ask Paystack directly, so a forged webhook can never credit anyone.
 async function verifyTransaction(reference) {
-  const r = await fetch(`${PAYSTACK}/transaction/verify/${encodeURIComponent(reference)}`, {
-    headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` },
-  });
+  const r = await fetch(
+    `${PAYSTACK}/transaction/verify/${encodeURIComponent(reference)}`,
+    { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
+  );
   const body = await r.json();
   if (!r.ok || !body.status) return null;
   return body.data;
 }
 
-// Credits the account exactly once. Safe to call repeatedly for the same reference.
+// Credits the user exactly once. Safe to call repeatedly for the same reference.
 async function creditDeposit(paystackData) {
   return sequelize.transaction(async (t) => {
-    // Lock order is always deposit -> account. Keep it the same everywhere.
-    const deposit = await Deposit.findOne({
-      where: { reference: paystackData.reference },
+    // Lock order is always transaction row -> user row. Keep it the same everywhere.
+    const tx = await Transaction.findOne({
+      where: { reference: paystackData.reference, type: 'deposit' },
       transaction: t,
       lock: t.LOCK.UPDATE,
     });
 
-    if (!deposit) return "unknown_reference";
-    if (deposit.status === "SUCCESS") return "already_processed";
+    if (!tx) return 'unknown_reference';
+    if (tx.status === 'success') return 'already_processed';
 
-    const amountMatches = BigInt(paystackData.amount) === BigInt(deposit.amountKobo);
-    const currencyMatches = paystackData.currency === deposit.currency;
-
-    if (!amountMatches || !currencyMatches) {
-      // Don't credit. Flag for a human to look at.
-      await deposit.update({ status: "REVIEW" }, { transaction: t });
-      return "mismatch";
+    const expectedKobo = tx.amount * 100;
+    if (paystackData.amount !== expectedKobo || paystackData.currency !== 'NGN') {
+      await tx.update({ status: 'review' }, { transaction: t }); // never credit a mismatch
+      return 'mismatch';
     }
 
-    const account = await Account.findByPk(deposit.accountId, {
+    const user = await User.findByPk(tx.receiverId, {
       transaction: t,
       lock: t.LOCK.UPDATE,
     });
+    if (!user) return 'user_missing';
 
-    // BIGINT comes back from Postgres as a string, so use BigInt for the math
-    const newBalance = BigInt(account.balanceKobo) + BigInt(deposit.amountKobo);
+    await user.update({ amount: user.amount + tx.amount }, { transaction: t });
 
-    await LedgerEntry.create(
+    await tx.update(
       {
-        accountId: account.id,
-        depositId: deposit.id,
-        type: "CREDIT",
-        amountKobo: deposit.amountKobo,
-        balanceAfterKobo: newBalance.toString(),
-        reference: `deposit:${deposit.reference}`, // unique: a second credit is impossible
-        description: "Paystack deposit",
+        status: 'success',
+        providerReference: String(paystackData.id),
       },
       { transaction: t }
     );
 
-    await account.update({ balanceKobo: newBalance.toString() }, { transaction: t });
-
-    await deposit.update(
-      {
-        status: "SUCCESS",
-        paidAt: paystackData.paid_at ? new Date(paystackData.paid_at) : new Date(),
-        paystackTransactionId: String(paystackData.id),
+    // dedupeKey is unique, so even a bug can't send the notification twice
+    await Notification.findOrCreate({
+      where: { dedupeKey: `deposit:${tx.reference}` },
+      defaults: {
+        userId: user.id,
+        type: 'deposit',
+        title: 'Deposit successful',
+        message: `Your wallet was credited with ₦${tx.amount.toLocaleString()}.`,
+        amount: tx.amount,
+        reference: tx.reference,
+        transactionId: tx.id,
       },
-      { transaction: t }
-    );
+      transaction: t,
+    });
 
-    return "credited";
+    return 'credited';
   });
 }
 
-module.exports = { createPendingDeposit, verifyTransaction, creditDeposit };
+module.exports = { createPendingDeposit, markFailed, verifyTransaction, creditDeposit };
