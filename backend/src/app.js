@@ -10,6 +10,10 @@ const cors = require('./middleware/cors');
 
 const app = express();
 
+app.set('trust proxy', 1);
+
+const helmet = require('helmet');
+
 app.use(cors);
 
 // Paystack webhook: needs the RAW body, so it MUST come before express.json().
@@ -32,6 +36,25 @@ const limiter = rateLimit({
     message: "Too many requests. Please try again later."
   }
 });
+
+app.disable('x-powered-by'); // helmet also does this, but it's harmless to be explicit
+
+app.use(helmet());
+
+app.use(cors);
+
+
+// Paystack webhook (raw body) stays before express.json()
+app.post('/webhooks/paystack', express.raw({ type: 'application/json' }), webhookHandler);
+
+app.use(express.json({ limit: '2mb' }));
+
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  })
+);
+
 
 app.get('/', (req, res) => {
   res.json({
