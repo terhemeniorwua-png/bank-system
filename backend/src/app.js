@@ -1,46 +1,53 @@
+require("dotenv").config();
 
 const express = require("express");
 const rateLimit = require("express-rate-limit");
 const routes = require('./routes/user.route');
+const { router: paystackRouter, webhookHandler } = require('./routes/paystack.route');
 const logger = require('./middleware/logger');
 const cors = require('./middleware/cors');
-
-require("dotenv").config();
+// const auth = require('./middleware/auth');
 
 const app = express();
 
-// Allow the configured frontend origin(s) to call the API. The URL is read
-// from FRONTEND_URL at request time; it is never hardcoded here.
 app.use(cors);
+
+// Paystack webhook: needs the RAW body, so it MUST come before express.json().
+// It's server-to-server, so it doesn't depend on CORS.
+app.post(
+  "/webhooks/paystack",
+  express.raw({ type: "application/json" }),
+  webhookHandler
+);
 
 // 2 mb allows the base64 profile-picture upload; every other endpoint only
 // ever sends small JSON bodies.
 app.use(express.json({ limit: "2mb" }));
 
 // Rate limiting
-
 const limiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 5,              
+  max: 5,
   message: {
     message: "Too many requests. Please try again later."
   }
 });
 
-
-app.get('/', (req, res, next) => {
+app.get('/', (req, res) => {
   res.json({
     "status": "success",
     "message": "Successful"
-  })
-  next()
+  });
 });
 
 // app.use(limiter)
 app.use('/user', logger, routes);
 
-// Centralised error handler (keeps errors out of individual routes and never
-// leaks stack traces or database details to clients).
+// Payments: add your auth middleware here so req.user is set
+app.use('/payments', logger, /* auth, */ paystackRouter);
+// -> POST /payments/deposits
+
+// Centralised error handler (unchanged)
 app.use((err, req, res, next) => {
   console.error(err);
 
@@ -55,9 +62,6 @@ app.use((err, req, res, next) => {
     });
   }
 
-  // Errors explicitly marked as safe by application code carry their own
-  // status and message; everything else stays a generic 500 so internal
-  // details are never leaked.
   if (err && err.expose === true && err.status) {
     return res.status(err.status).json({
       status: "error",
@@ -72,12 +76,4 @@ app.use((err, req, res, next) => {
   });
 });
 
-
 module.exports = app;
-
-
-
-
-
-
-
