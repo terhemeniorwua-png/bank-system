@@ -1,92 +1,124 @@
 'use strict';
 
-const db = require('../../models');
-const { sequelize, User, Transaction, Notification } = db;
+const crypto = require('node:crypto');
+const express = require('express');
+const { Transaction, User } = require('../../models');
+const {
+  createPendingDeposit,
+  markFailed,
+  verifyTransaction,
+  creditDeposit,
+} = require('../services/deposit.service');
 
 const PAYSTACK = 'https://api.paystack.co';
+const secret = process.env.PAYSTACK_SECRET_KEY;
+const callbackUrl = process.env.PAYSTACK_CALLBACK_URL;
 
-async function createPendingDeposit({ user, amountNaira, reference }) {
-  return Transaction.create({
-    type: 'deposit',
-    status: 'pending', // the model default is 'success', so always set this explicitly
-    amount: amountNaira,
-    receiverId: user.id,
-    receiverAccountNumber: user.accountNumber,
-    reference,
-    metadata: { provider: 'paystack' },
-  });
-}
+if (!secret) throw new Error('PAYSTACK_SECRET_KEY is not set');
 
-async function markFailed(reference) {
-  await Transaction.update(
-    { status: 'failed' },
-    { where: { reference, status: 'pending' } }
-  );
-}
+const MIN_DEPOSIT_NGN = 100;
+const MAX_DEPOSIT_NGN = 5_000_000;
 
-// Ask Paystack directly, so a forged webhook can never credit anyone.
-async function verifyTransaction(reference) {
-  const r = await fetch(
-    `${PAYSTACK}/transaction/verify/${encodeURIComponent(reference)}`,
-    { headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` } }
-  );
-  const body = await r.json();
-  if (!r.ok || !body.status) return null;
-  return body.data;
-}
+// ---- Webhook (mounted in app.js with express.raw) ----
+async function webhookHandler(req, res) {
+  const expected = crypto.createHmac('sha512', secret).update(req.body).digest('hex');
+  const received = String(req.headers['x-paystack-signature'] || '');
+  const a = Buffer.from(expected);
+  const b = Buffer.from(received);
 
-// Credits the user exactly once. Safe to call repeatedly for the same reference.
-async function creditDeposit(paystackData) {
-  return sequelize.transaction(async (t) => {
-    // Lock order is always transaction row -> user row. Keep it the same everywhere.
-    const tx = await Transaction.findOne({
-      where: { reference: paystackData.reference, type: 'deposit' },
-      transaction: t,
-      lock: t.LOCK.UPDATE,
-    });
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return res.sendStatus(401);
+  }
 
-    if (!tx) return 'unknown_reference';
-    if (tx.status === 'success') return 'already_processed';
+  let event;
+  try {
+    event = JSON.parse(req.body.toString());
+  } catch {
+    return res.sendStatus(400);
+  }
 
-    const expectedKobo = tx.amount * 100;
-    if (paystackData.amount !== expectedKobo || paystackData.currency !== 'NGN') {
-      await tx.update({ status: 'review' }, { transaction: t }); // never credit a mismatch
-      return 'mismatch';
+  if (event.event !== 'charge.success') return res.sendStatus(200);
+
+  try {
+    const verified = await verifyTransaction(event.data.reference);
+    if (!verified || verified.status !== 'success') {
+      console.warn('Paystack verify did not confirm', event.data.reference);
+      return res.sendStatus(200);
     }
 
-    const user = await User.findByPk(tx.receiverId, {
-      transaction: t,
-      lock: t.LOCK.UPDATE,
-    });
-    if (!user) return 'user_missing';
-
-    await user.update({ amount: user.amount + tx.amount }, { transaction: t });
-
-    await tx.update(
-      {
-        status: 'success',
-        providerReference: String(paystackData.id),
-      },
-      { transaction: t }
-    );
-
-    // dedupeKey is unique, so even a bug can't send the notification twice
-    await Notification.findOrCreate({
-      where: { dedupeKey: `deposit:${tx.reference}` },
-      defaults: {
-        userId: user.id,
-        type: 'deposit',
-        title: 'Deposit successful',
-        message: `Your wallet was credited with ₦${tx.amount.toLocaleString()}.`,
-        amount: tx.amount,
-        reference: tx.reference,
-        transactionId: tx.id,
-      },
-      transaction: t,
-    });
-
-    return 'credited';
-  });
+    const outcome = await creditDeposit(verified);
+    console.log('paystack webhook', event.data.reference, outcome);
+    return res.sendStatus(200);
+  } catch (err) {
+    console.error('Webhook processing failed:', err);
+    return res.sendStatus(500); // non-2xx makes Paystack retry later
+  }
 }
 
-module.exports = { createPendingDeposit, markFailed, verifyTransaction, creditDeposit };
+// ---- Routes ----
+const router = express.Router();
+
+// Start a deposit
+router.post('/deposits', async (req, res, next) => {
+  try {
+    const amountNaira = Number(req.body.amountNaira);
+
+    // Balances are whole naira, so only whole-naira deposits are accepted
+    if (!Number.isInteger(amountNaira) || amountNaira < MIN_DEPOSIT_NGN || amountNaira > MAX_DEPOSIT_NGN) {
+      return res.status(400).json({ status: 'error', message: 'Invalid amount' });
+    }
+
+    const reference = `dep_${crypto.randomUUID()}`;
+    await createPendingDeposit({ user: req.user, amountNaira, reference });
+
+    const r = await fetch(`${PAYSTACK}/transaction/initialize`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: req.user.email,
+        amount: amountNaira * 100, // kobo
+        reference,
+        callback_url: callbackUrl,
+      }),
+    });
+    const data = await r.json();
+
+    if (!r.ok || !data.status) {
+      await markFailed(reference);
+      return res.status(502).json({ status: 'error', message: 'Could not start payment' });
+    }
+
+    res.json({ status: 'success', authorizationUrl: data.data.authorization_url, reference });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// The frontend's callback page polls this to show the result
+router.get('/deposits/:reference', async (req, res, next) => {
+  try {
+    const tx = await Transaction.findOne({
+      where: { reference: req.params.reference, type: 'deposit', receiverId: req.user.id },
+    });
+    if (!tx) return res.status(404).json({ status: 'error', message: 'Not found' });
+
+    res.json({
+      status: 'success',
+      deposit: { reference: tx.reference, status: tx.status, amount: tx.amount },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Current balance (whole naira, from users.amount)
+router.get('/account', async (req, res, next) => {
+  try {
+    const user = await User.findByPk(req.user.id, { attributes: ['id', 'amount'] });
+    res.json({ status: 'success', balanceNaira: user ? user.amount : 0, currency: 'NGN' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+module.exports = { router, webhookHandler };
