@@ -1,5 +1,10 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:5100";
 
+// Mount path of paystackRouter in backend/src/app.js (confirm with: grep -n "paystack" backend/src/app.js)
+// const PAYSTACK_BASE = "/user/paystack";
+
+const PAYSTACK_BASE = "/payments";
+
 // Dispatched on window when the backend rejects an authenticated request with
 // 401 (an expired or invalid token). The AuthProvider listens for this and ends
 // the local session so the user is returned to the login screen.
@@ -84,6 +89,15 @@ export const api = {
   // Session-authenticated balance (no PIN required once logged in).
   getBalance: () => request("/user/account/balance", { method: "GET" }),
   deposit: (body) => request("/user/deposit", { method: "PUT", body }),
+
+  // Paystack deposits
+  initiateDeposit: (body) =>
+    request(`${PAYSTACK_BASE}/deposits`, { method: "POST", body }),
+  verifyDeposit: (reference) =>
+    request(`${PAYSTACK_BASE}/deposits/${encodeURIComponent(reference)}`, {
+      method: "GET",
+    }),
+
   getBanks: () => request("/user/banks", { method: "GET" }),
   validateTransferAccount: (body) =>
     request("/user/transfer/validate-account", { method: "POST", body }),

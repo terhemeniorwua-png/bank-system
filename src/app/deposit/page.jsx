@@ -41,8 +41,9 @@ export default function DepositPage() {
   const handleSubmit = (e) => {
     e.preventDefault();
     setError(null);
-    if (!form.accountNumber || !form.amount) {
-      setError("Account and amount required");
+    const amt = Number(form.amount);
+    if (!Number.isInteger(amt) || amt < 100) {
+      setError("Enter a whole-naira amount of at least ₦100");
       return;
     }
     setShowConfirm(true);
@@ -52,17 +53,17 @@ export default function DepositPage() {
     setLoading(true);
     setError(null);
     try {
-      await api.deposit({
-        accountNumber: form.accountNumber,
-        amount: form.amount,
-      });
-      setSuccess("Deposit successful!");
+      // The backend reads the user from the login token, so only the amount is sent
+      const res = await api.initiateDeposit({ amountNaira: Number(form.amount) });
+      const url = res?.authorizationUrl;
+      if (!url) throw new Error("Could not start payment. Please try again.");
+
+      setSuccess("Redirecting to Paystack...");
       setShowConfirm(false);
-      setTimeout(() => router.push("/dashboard"), 1500);
+      window.location.href = url;
     } catch (e) {
-      setError(e.message || "Deposit failed");
+      setError(e.message || "Could not start payment");
       setShowConfirm(false);
-    } finally {
       setLoading(false);
     }
   };
@@ -97,9 +98,10 @@ export default function DepositPage() {
                 type="text"
                 name="accountNumber"
                 required
+                readOnly
                 value={form.accountNumber}
                 onChange={handleChange}
-                className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                className="w-full px-3 py-2 border border-border rounded-lg bg-gray-50 focus:outline-none"
               />
             </div>
             <div>
@@ -108,7 +110,8 @@ export default function DepositPage() {
                 type="number"
                 name="amount"
                 required
-                min="1"
+                min="100"
+                step="1"
                 value={form.amount}
                 onChange={handleChange}
                 className="w-full px-3 py-2 border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
@@ -119,7 +122,7 @@ export default function DepositPage() {
               disabled={loading}
               className="w-full py-3 bg-primary text-white rounded-xl hover:bg-primary-deep transition-colors disabled:opacity-50"
             >
-              Continue
+              Continue to Paystack
             </button>
           </form>
         </div>
