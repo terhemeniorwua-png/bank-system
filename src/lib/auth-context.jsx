@@ -141,7 +141,7 @@ export function AuthProvider({ children }) {
           ? Math.max(0, payload.exp - Math.floor(Date.now() / 1000))
           : 86400;
 
-      document.cookie = `${TOKEN_COOKIE}=${token}; path=/; max-age=${maxAge}; SameSite=Strict`;
+      document.cookie = `${TOKEN_COOKIE}=${token}; path=/; max-age=${maxAge}; SameSite=Lax`;
       scheduleExpiry(payload);
     }
     setUser(userData);
