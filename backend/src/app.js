@@ -2,18 +2,16 @@ require("dotenv").config();
 
 const express = require("express");
 const rateLimit = require("express-rate-limit");
+const helmet = require("helmet");
 const routes = require('./routes/user.route');
 const { router: paystackRouter, webhookHandler } = require('./routes/paystack.route');
 const logger = require('./middleware/logger');
 const cors = require('./middleware/cors');
-const auth = require('./middleware/auth');
-   const authenticate = require('./middleware/authentication');
+const authenticate = require('./middleware/authentication');
 
 const app = express();
 
 app.set('trust proxy', 1);
-
-const helmet = require('helmet');
 
 app.use(cors);
 
@@ -38,24 +36,13 @@ const limiter = rateLimit({
   }
 });
 
-app.disable('x-powered-by'); // helmet also does this, but it's harmless to be explicit
-
-app.use(helmet());
-
-app.use(cors);
-
-
-// Paystack webhook (raw body) stays before express.json()
-app.post('/webhooks/paystack', express.raw({ type: 'application/json' }), webhookHandler);
-
-app.use(express.json({ limit: '2mb' }));
+app.disable('x-powered-by');
 
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
   })
 );
-
 
 app.get('/', (req, res) => {
   res.json({
@@ -67,9 +54,8 @@ app.get('/', (req, res) => {
 // app.use(limiter)
 app.use('/user', logger, routes);
 
-// Payments: add your auth middleware here so req.user is set
+// Payments: authenticate sets req.user from the login token
 app.use('/payments', logger, authenticate, paystackRouter);
-// -> POST /payments/deposits
 
 // Centralised error handler (unchanged)
 app.use((err, req, res, next) => {
