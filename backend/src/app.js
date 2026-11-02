@@ -7,6 +7,7 @@ const { router: paystackRouter, webhookHandler } = require('./routes/paystack.ro
 const logger = require('./middleware/logger');
 const cors = require('./middleware/cors');
 const auth = require('./middleware/auth');
+   const authenticate = require('./middleware/authentication');
 
 const app = express();
 
@@ -67,7 +68,7 @@ app.get('/', (req, res) => {
 app.use('/user', logger, routes);
 
 // Payments: add your auth middleware here so req.user is set
-app.use('/payments', logger, auth, paystackRouter);
+app.use('/payments', logger, authenticate, paystackRouter);
 // -> POST /payments/deposits
 
 // Centralised error handler (unchanged)
