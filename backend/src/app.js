@@ -8,6 +8,8 @@ const { router: paystackRouter, webhookHandler } = require('./routes/paystack.ro
 const logger = require('./middleware/logger');
 const cors = require('./middleware/cors');
 const authenticate = require('./middleware/authentication');
+const { Transaction } = require('../models');
+
 
 const app = express();
 
@@ -53,6 +55,27 @@ app.get('/', (req, res) => {
 
 // app.use(limiter)
 app.use('/user', logger, routes);
+
+// Public receipt status: safe because references are unguessable UUIDs and
+// only status and amount are returned. Must come before the authenticated mount.
+app.get('/payments/status/:reference', logger, async (req, res, next) => {
+  try {
+    const ref = req.params.reference;
+    if (!/^dep_[0-9a-f-]{36}$/i.test(ref)) {
+      return res.status(404).json({ status: 'error', message: 'Not found' });
+    }
+    const tx = await Transaction.findOne({ where: { reference: ref, type: 'deposit' } });
+    if (!tx) {
+      return res.status(404).json({ status: 'error', message: 'Not found' });
+    }
+    res.json({
+      status: 'success',
+      deposit: { reference: tx.reference, status: tx.status, amount: tx.amount },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Payments: authenticate sets req.user from the login token
 app.use('/payments', logger, authenticate, paystackRouter);

@@ -93,10 +93,8 @@ export const api = {
   // Paystack deposits
   initiateDeposit: (body) =>
     request(`${PAYSTACK_BASE}/deposits`, { method: "POST", body }),
-  verifyDeposit: (reference) =>
-    request(`${PAYSTACK_BASE}/deposits/${encodeURIComponent(reference)}`, {
-      method: "GET",
-    }),
+    verifyDeposit: (reference) =>
+    request(`/payments/status/${encodeURIComponent(reference)}`, { method: "GET" }),
 
   getBanks: () => request("/user/banks", { method: "GET" }),
   validateTransferAccount: (body) =>
